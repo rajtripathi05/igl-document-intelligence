@@ -1,0 +1,14 @@
+Analyze the attached Purchase Order.
+
+Convert it into the standardized ERP JSON schema.
+
+Requirements:
+
+- Read every page.
+- Extract all available business fields.
+- Preserve line item order.
+- Preserve quantities, prices, taxes and totals exactly.
+- Preserve GST, PAN and HSN codes exactly.
+- If a field is unavailable return null.
+- Never guess values.
+- Return ONLY valid JSON matching the schema below.

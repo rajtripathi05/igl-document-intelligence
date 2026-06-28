@@ -1,0 +1,94 @@
+{
+  "metadata": {
+    "document_type": "Shipping Bill",
+    "department": "Export",
+    "document_subtype": "Customs Shipping Bill",
+    "source": {
+      "filename": "",
+      "file_type": "pdf"
+    }
+  },
+  "shipping_bill": {
+    "shipping_bill_number": "",
+    "shipping_bill_date": "",
+    "customs_house": "",
+    "port_code": "",
+    "port_of_loading": "",
+    "port_of_discharge": "",
+    "country_of_destination": "",
+    "shipping_scheme": "",
+    "export_promotion_scheme": null,
+    "leo_number": null,
+    "leo_date": null
+  },
+  "exporter": {
+    "name": "",
+    "address": "",
+    "iec_number": "",
+    "gstin": ""
+  },
+  "consignee": {
+    "name": "",
+    "address": "",
+    "country": ""
+  },
+  "buyer": {
+    "name": "",
+    "country": ""
+  },
+  "invoice": {
+    "invoice_number": "",
+    "invoice_date": "",
+    "invoice_value": 0,
+    "fob_value": 0,
+    "freight": 0,
+    "insurance": 0,
+    "currency": "",
+    "exchange_rate": 0
+  },
+  "items": [
+    {
+      "line_number": "",
+      "product_description": "",
+      "hs_code": "",
+      "quantity": 0,
+      "unit": "",
+      "unit_price": 0,
+      "fob_value": 0,
+      "gross_weight": 0,
+      "net_weight": 0,
+      "number_of_packages": 0
+    }
+  ],
+  "shipment": {
+    "container_number": "",
+    "seal_number": "",
+    "vehicle_number": "",
+    "total_packages": 0,
+    "total_gross_weight": 0,
+    "total_net_weight": 0
+  },
+  "summary": {
+    "total_invoice_value": 0,
+    "total_fob_value": 0,
+    "total_freight": 0,
+    "total_insurance": 0,
+    "currency": ""
+  },
+  "drawback": {
+    "drawback_claimed": false,
+    "drawback_amount": 0,
+    "drawback_details": null
+  },
+  "remarks": [],
+  "additional_information": {},
+  "missing_fields": [],
+  "validation": {
+    "fob_matches": true,
+    "weight_consistent": true,
+    "mandatory_fields_complete": true,
+    "line_item_count": 0
+  },
+  "warnings": [],
+  "errors": []
+}
