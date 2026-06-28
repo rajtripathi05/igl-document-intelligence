@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from google import genai
 from google.genai import types
 
+from api_key_manager import GeminiKeyManager
+from gemini_errors import run_with_rotation
 from processors.base import BaseProcessor
 
 logger = logging.getLogger(__name__)
@@ -52,16 +54,15 @@ class ClassificationResult:
 class DocumentClassifier:
     """Detects a document's type and routes it to the correct processor."""
 
-    def __init__(self, api_key: str | None, model: str) -> None:
+    def __init__(self, key_manager: GeminiKeyManager, model: str) -> None:
         """Initialize the classifier.
 
         Args:
-            api_key: Gemini API key.
+            key_manager: The Gemini API key manager (sole source of keys).
             model: Gemini model identifier.
         """
-        self._api_key = api_key
+        self._keys = key_manager
         self._model = model
-        self._client = genai.Client(api_key=api_key) if api_key else None
 
     def classify(
         self,
@@ -83,7 +84,7 @@ class DocumentClassifier:
         if not candidates:
             return ClassificationResult(None, None, "Unknown", 0, "keyword")
 
-        if self._client is not None:
+        if self._keys.has_available_key():
             result = self._classify_with_ai(document_bytes, mime_type, candidates)
             if result is not None:
                 return result
@@ -114,16 +115,21 @@ class DocumentClassifier:
             '"confidence": <0-100>}. Use null for use_case_key if none match.\n\n'
             f"CATALOG:\n{json.dumps(catalog, indent=2)}"
         )
-        try:
-            part = types.Part.from_bytes(data=document_bytes, mime_type=mime_type)
-            response = self._client.models.generate_content(
+        part = types.Part.from_bytes(data=document_bytes, mime_type=mime_type)
+
+        def _call(api_key: str) -> str:
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
                 model=self._model,
                 contents=[instruction, part],
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json", temperature=0.0
                 ),
             )
-            payload = json.loads(getattr(response, "text", "") or "{}")
+            return getattr(response, "text", "") or "{}"
+
+        try:
+            payload = json.loads(run_with_rotation(self._keys, _call))
         except Exception:  # noqa: BLE001 - fall back to keyword scoring
             logger.exception("AI classification failed; falling back to keywords.")
             return None

@@ -175,6 +175,38 @@ def render_breadcrumb(department_name: str, use_case_name: str | None = None) ->
     st.markdown(f'<div class="igl-crumb">📍 {trail}</div>', unsafe_allow_html=True)
 
 
+def render_key_status(status: dict) -> None:
+    """Render the development-only Gemini key status indicator.
+
+    Shows the active key number, total keys, and health — never key values.
+
+    Args:
+        status: A snapshot from ``GeminiKeyManager.status()`` containing
+            ``active_number``, ``total``, ``available``, and ``healthy``.
+    """
+    healthy = bool(status.get("healthy"))
+    available = int(status.get("available", 0))
+    total = int(status.get("total", 0))
+    active = int(status.get("active_number", 0))
+
+    if not healthy:
+        label, color = "Rate-limited", CONFIDENCE_COLORS["verify"]
+    elif available < total:
+        label, color = "Degraded", CONFIDENCE_COLORS["review"]
+    else:
+        label, color = "Healthy", CONFIDENCE_COLORS["high"]
+
+    st.markdown(
+        f'<div class="igl-card-title">Gemini Key</div>'
+        f'<div class="igl-metric">#{active} / {total}</div>'
+        f'<div style="margin-top:4px;">'
+        f'<span class="igl-conf-chip" style="background:{color};">{label}</span>'
+        f'  <span class="igl-metric-label">{available} available</span>'
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_coming_soon(department_name: str, use_case_name: str) -> None:
     """Render a professional placeholder for not-yet-built use cases."""
     st.subheader(f"{department_name}  ›  {use_case_name}")

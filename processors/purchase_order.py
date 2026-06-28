@@ -16,7 +16,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from config import settings
+from config import gemini_key_manager, settings
 from excel import ExcelGenerator
 from gemini import GeminiClient
 from processors.base import BaseProcessor
@@ -126,7 +126,7 @@ class PurchaseOrderProcessor(BaseProcessor):
     def build_client(self) -> GeminiClient:
         """Construct a Gemini client configured for Purchase Orders."""
         return GeminiClient(
-            api_key=settings.gemini_api_key,
+            key_manager=gemini_key_manager,
             system_prompt_path=settings.system_prompt_path,
             extraction_prompt_path=settings.extraction_prompt_path,
             schema_path=settings.schema_path,

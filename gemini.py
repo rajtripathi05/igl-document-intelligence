@@ -19,6 +19,8 @@ from typing import Any
 from google import genai
 from google.genai import types
 
+from api_key_manager import GeminiKeyManager, NoApiKeysConfigured
+from gemini_errors import run_with_rotation
 from utils.helpers import read_text_file
 from utils.json_handler import load_schema, parse_model_json
 
@@ -69,7 +71,7 @@ class GeminiClient:
 
     def __init__(
         self,
-        api_key: str | None,
+        key_manager: GeminiKeyManager,
         system_prompt_path: Path,
         extraction_prompt_path: Path,
         schema_path: Path,
@@ -77,23 +79,26 @@ class GeminiClient:
     ) -> None:
         """Initialize the client and load prompts and schema from disk.
 
+        Keys are never read directly here; they are obtained through the key
+        manager at request time so rate-limit rotation can occur transparently.
+
         Args:
-            api_key: Google Gemini API key (read from the environment).
+            key_manager: The Gemini API key manager (sole source of keys).
             system_prompt_path: Path to the system prompt file.
             extraction_prompt_path: Path to the extraction prompt file.
             schema_path: Path to the canonical Purchase Order schema.
             model: Gemini model identifier.
 
         Raises:
-            GeminiExtractionError: If the API key is missing.
+            GeminiExtractionError: If no API keys are configured.
         """
-        if not api_key:
-            raise GeminiExtractionError(
-                "GEMINI_API_KEY is not set. Add it to the .env file."
-            )
+        try:
+            key_manager.require_keys()
+        except NoApiKeysConfigured as exc:
+            raise GeminiExtractionError(str(exc)) from exc
 
         self.model = model
-        self._client = genai.Client(api_key=api_key)
+        self._keys = key_manager
         self._system_prompt = read_text_file(system_prompt_path)
         self._extraction_prompt = read_text_file(extraction_prompt_path)
         self._schema = load_schema(schema_path)
@@ -125,27 +130,34 @@ class GeminiClient:
     def _generate(
         self, document_bytes: bytes, mime_type: str, with_confidence: bool
     ) -> dict[str, Any]:
-        """Run a single Gemini extraction call and parse the JSON result."""
-        try:
-            document_part = types.Part.from_bytes(
-                data=document_bytes, mime_type=mime_type
-            )
-            response = self._client.models.generate_content(
+        """Run a Gemini extraction call, rotating keys on rate limits.
+
+        The request is retried across all available API keys transparently; the
+        caller never needs to re-upload the document. Rate-limit detection and
+        rotation are handled by :func:`gemini_errors.run_with_rotation`.
+        """
+        document_part = types.Part.from_bytes(data=document_bytes, mime_type=mime_type)
+        instruction = self._build_instruction(with_confidence)
+
+        def _call(api_key: str) -> str:
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
                 model=self.model,
-                contents=[self._build_instruction(with_confidence), document_part],
+                contents=[instruction, document_part],
                 config=types.GenerateContentConfig(
                     system_instruction=self._system_prompt,
                     response_mime_type="application/json",
                     temperature=0.0,
                 ),
             )
-        except Exception as exc:  # noqa: BLE001 - surface any SDK/network error
-            logger.exception("Gemini API call failed.")
-            raise GeminiExtractionError(f"Gemini API call failed: {exc}") from exc
+            text = getattr(response, "text", None)
+            if not text:
+                raise GeminiExtractionError("Gemini returned no text output.")
+            return text
 
-        raw_text = getattr(response, "text", None)
-        if not raw_text:
-            raise GeminiExtractionError("Gemini returned no text output.")
+        # Non-rate-limit errors propagate; AllKeysExhausted carries the friendly
+        # message. Only the rotation-exhausted and parse paths are reshaped here.
+        raw_text = run_with_rotation(self._keys, _call)
 
         try:
             return parse_model_json(raw_text)

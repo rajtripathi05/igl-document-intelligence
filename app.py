@@ -20,8 +20,9 @@ import logging
 
 import streamlit as st
 
+import config
 import ui
-from config import settings
+from config import has_gemini_keys, settings
 from departments import DEPARTMENTS, Department
 from document_state import DocumentManager, DocumentState
 from engine import render_document_workspace
@@ -76,6 +77,11 @@ def _render_sidebar() -> Department:
                 manager.clear()
                 st.rerun()
 
+        # Development-only Gemini key status (hidden in production; no key values).
+        if settings.dev_mode and config.gemini_key_manager.has_keys():
+            st.divider()
+            ui.render_key_status(config.gemini_key_manager.status())
+
     return department
 
 
@@ -88,6 +94,12 @@ def _doc_id_for(filename: str, payload: bytes) -> str:
 def _process_uploads(department: Department, uploaded_files: list) -> None:
     """Classify and extract each uploaded document with a progress indicator."""
     manager = _manager()
+
+    # A new processing action is a fresh attempt: clear any key-exhaustion flags
+    # from a previous run so every key is reconsidered. Keys that hit a rate
+    # limit during THIS batch stay skipped for the remainder of the batch.
+    config.gemini_key_manager.reset_health()
+
     classifier = build_classifier()
 
     # Department-scoped candidates first; fall back to all processors so a
@@ -233,9 +245,10 @@ def main() -> None:
     department = _render_sidebar()
     ui.render_breadcrumb(department.name, "Auto-detect document type")
 
-    if not settings.gemini_api_key:
+    if not has_gemini_keys():
         st.error(
-            "GEMINI_API_KEY is not configured. Add it to the .env file and "
+            "No Gemini API key is configured. Add GEMINI_API_KEY (or "
+            "GEMINI_API_KEY_1, GEMINI_API_KEY_2, ...) to the .env file and "
             "restart the application."
         )
 

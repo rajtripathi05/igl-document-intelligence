@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import logging
 
+from api_key_manager import AllKeysExhausted
 from classifier import DocumentClassifier
-from config import settings
+from config import gemini_key_manager, settings
 from document_state import DocumentState
 from gemini import GeminiExtractionError
 from processors.base import BaseProcessor
@@ -70,6 +71,11 @@ def extract_document(doc: DocumentState) -> None:
         doc.issues = doc.processor.validate(normalized)
         doc.status = "done"
         logger.info("Extracted '%s' as %s.", doc.filename, doc.document_type)
+    except AllKeysExhausted as exc:
+        # Friendly, non-sensitive message; every key is rate-limited.
+        logger.warning("Extraction halted for %s: all keys rate-limited.", doc.filename)
+        doc.status = "error"
+        doc.error = str(exc)
     except (GeminiExtractionError, ValueError) as exc:
         logger.exception("Extraction failed for %s.", doc.filename)
         doc.status = "error"
@@ -79,5 +85,5 @@ def extract_document(doc: DocumentState) -> None:
 def build_classifier() -> DocumentClassifier:
     """Construct a classifier from application settings."""
     return DocumentClassifier(
-        api_key=settings.gemini_api_key, model=settings.gemini_model
+        key_manager=gemini_key_manager, model=settings.gemini_model
     )

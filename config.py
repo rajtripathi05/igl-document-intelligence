@@ -12,6 +12,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from api_key_manager import GeminiKeyManager
+
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
@@ -21,8 +23,12 @@ load_dotenv(BASE_DIR / ".env")
 class Settings:
     """Runtime settings loaded from environment variables."""
 
-    gemini_api_key: str | None = os.getenv("GEMINI_API_KEY")
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    # Development mode enables the non-sensitive Gemini key status indicator in
+    # the UI. Defaults to on; set APP_ENV=production (or DEV_MODE=false) to hide.
+    dev_mode: bool = os.getenv("APP_ENV", "development").lower() != "production" and (
+        os.getenv("DEV_MODE", "true").lower() not in ("0", "false", "no")
+    )
     prompts_dir: Path = BASE_DIR / "prompts"
     schemas_dir: Path = BASE_DIR / "schemas"
     templates_dir: Path = BASE_DIR / "templates"
@@ -74,3 +80,13 @@ class Settings:
 
 
 settings = Settings()
+
+
+# Single shared Gemini key manager for the whole application. Modules obtain
+# keys exclusively through this manager and never read key env vars directly.
+gemini_key_manager = GeminiKeyManager()
+
+
+def has_gemini_keys() -> bool:
+    """True if at least one Gemini API key is configured."""
+    return gemini_key_manager.has_keys()
