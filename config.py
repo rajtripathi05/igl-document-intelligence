@@ -12,6 +12,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from ai_gateway import AIGateway, discover_models
 from api_key_manager import GeminiKeyManager
 
 
@@ -23,7 +24,11 @@ load_dotenv(BASE_DIR / ".env")
 class Settings:
     """Runtime settings loaded from environment variables."""
 
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    # Backward-compatible default model. The gateway discovers the full,
+    # configurable model priority list (GEMINI_MODEL_1..N); this single value is
+    # retained only for callers/tests that still ask for a default model. Models
+    # are never hardcoded inside the extraction engine — see ``ai_gateway``.
+    gemini_model: str = discover_models()[0]
     # Development mode enables the non-sensitive Gemini key status indicator in
     # the UI. Defaults to on; set APP_ENV=production (or DEV_MODE=false) to hide.
     dev_mode: bool = os.getenv("APP_ENV", "development").lower() != "production" and (
@@ -85,6 +90,12 @@ settings = Settings()
 # Single shared Gemini key manager for the whole application. Modules obtain
 # keys exclusively through this manager and never read key env vars directly.
 gemini_key_manager = GeminiKeyManager()
+
+
+# Single shared Enterprise AI Gateway — the only entry point for AI requests.
+# Every processor and the classifier route Gemini calls through this instance so
+# key + model failover is applied uniformly. No module talks to Gemini directly.
+ai_gateway = AIGateway(key_manager=gemini_key_manager)
 
 
 def has_gemini_keys() -> bool:

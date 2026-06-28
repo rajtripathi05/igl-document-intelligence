@@ -65,6 +65,9 @@ Document Classifier  ──>  detects document type from processor metadata
 Processor Registry   ──>  routes to the matching processor (or "Unsupported")
     |
     v
+AI Gateway           ──>  single AI entry point; key + model failover
+    |
+    v
 Gemini Extraction    ──>  business data + per-field confidence (AI)
     |
     v
@@ -103,8 +106,9 @@ re-export, validation, multi-upload, and downloads.
 ## Folder & Module Responsibilities
 
 ### Application shell / engine
-- `app.py`: Orchestration shell — department nav, multi-upload, progress,
-  per-document tabs, batch downloads. No document-specific logic.
+- `app.py`: Orchestration shell — department nav, multi-upload, premium
+  drag-and-drop upload, animated processing queue, per-document tabs, batch
+  downloads. No document-specific logic.
 - `engine.py`: Generic engine. Renders confidence-scored editable fields, line
   items, preview/data toggle, validation, and per-document export for any
   processor — driven by its `ProcessorSpec`.
@@ -115,12 +119,26 @@ re-export, validation, multi-upload, and downloads.
 - `document_state.py`: `DocumentState` (per-document state) and `DocumentManager`
   (collection + batch JSON/Excel/ZIP downloads).
 - `preview.py`: PDF/image preview rendering (PyMuPDF thumbnails + full pages).
-- `ui.py`: India Glycols branding, SAP-Fiori-style theme, confidence chips/colors,
-  header, breadcrumb.
-- `config.py`: Environment + path configuration. Secrets read from env only.
+- `ui.py`: India Glycols branding and the premium enterprise design system
+  (~70% SAP Fiori, ~30% Apple HIG) — global theme/CSS, header, sidebar brand
+  lockup, breadcrumbs, section headings, confidence chips/meters, the AI Gateway
+  dashboard card, processing-queue/document-status helpers, and subtle
+  animations. The navigation is the Department selector; the sidebar shows no
+  decorative (non-routing) nav items.
+- `config.py`: Environment + path configuration and the shared singletons
+  (`gemini_key_manager`, `ai_gateway`). Secrets read from env only.
+- `ai_gateway.py`: **Enterprise AI Gateway** — the single entry point for every
+  AI request. Fails over across both API keys and Gemini models before reporting
+  failure (immediate key/model rotation; exponential backoff only between full
+  retry cycles, max 3). Discovers the configurable model priority list
+  (`GEMINI_MODEL_1..N`). Exposes a non-sensitive status snapshot for the dev UI.
+- `api_key_manager.py`: Discovers/rotates/tracks API keys. No module reads key
+  env vars directly. Keys are referenced only by number, never by value.
+- `gemini_errors.py`: Retryable-vs-fatal error classification used by the gateway.
 - `gemini.py`: Google Gemini client boundary. Document-agnostic extraction
-  (`extract`, `extract_with_confidence`). OCR/confidence guidance is appended at
-  call time so prompt files are never modified.
+  (`extract`, `extract_with_confidence`). Builds the instruction and delegates
+  execution to the gateway — it never selects a key or model itself. OCR/
+  confidence guidance is appended at call time so prompt files are never modified.
 
 ### Per-document-type boundaries
 - `excel.py`: Purchase Order Excel generator.
@@ -164,6 +182,11 @@ re-export, validation, multi-upload, and downloads.
 ## Non-Negotiable Rules
 
 - Gemini ONLY extracts business information (and reports confidence).
+- ALL AI requests go through the `ai_gateway` single entry point. No processor,
+  the classifier, or any future module talks to Gemini (`genai`) directly except
+  inside the gateway-supplied `call(api_key, model)` closure.
+- Models are configurable (`GEMINI_MODEL_1..N`) and never hardcoded in the
+  extraction engine — only the gateway/config know default models.
 - Python performs validation, transformation, and Excel generation.
 - Excel is ALWAYS generated from standardized JSON, never directly from Gemini.
 - The JSON schema is the single source of truth.
@@ -175,7 +198,12 @@ re-export, validation, multi-upload, and downloads.
 
 ```bash
 pip install -r requirements.txt
-# Create .env with:  GEMINI_API_KEY=your_key   (optional: GEMINI_MODEL=gemini-2.5-flash)
+# Create .env with one or more keys and (optionally) a model priority list:
+#   GEMINI_API_KEY_1=your_key       (add GEMINI_API_KEY_2 ... _N for failover)
+#   GEMINI_MODEL_1=gemini-2.5-flash (add GEMINI_MODEL_2 ... _N, tried in order)
+#   GEMINI_MODEL_2=gemini-2.5-flash-lite
+#   ...                             (numbering is open-ended; e.g. up to _10)
+# The AI Gateway fails over across all keys and models automatically.
 streamlit run app.py
 ```
 

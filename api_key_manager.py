@@ -198,10 +198,16 @@ class GeminiKeyManager:
         logger.warning("Key #%d exhausted (%s).", entry.number, reason)
 
     def reset_health(self) -> None:
-        """Clear all exhausted flags (e.g. to start a fresh attempt cycle)."""
+        """Clear all exhausted flags and rewind to the first key.
+
+        Used to begin a fresh attempt cycle (e.g. when the gateway switches to a
+        new model): every key becomes available again and rotation restarts from
+        Key #1 so failover order is deterministic.
+        """
         for entry in self._entries:
             entry.exhausted = False
-        logger.info("Gemini key health reset; all keys marked available.")
+        self._active_index = 0
+        logger.info("Gemini key health reset; all keys available, rewound to #1.")
 
     # ----- Status (safe for UI) ------------------------------------------ #
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 
 import streamlit as st
 
@@ -53,8 +54,7 @@ def _manager() -> DocumentManager:
 def _render_sidebar() -> Department:
     """Render the department navigation (document type is auto-detected)."""
     with st.sidebar:
-        st.markdown(f"### {ui.COMPANY_NAME}")
-        st.caption("Document Intelligence Platform")
+        ui.render_sidebar_brand(settings.assets_dir)
         st.divider()
 
         dept_names = [f"{d.icon}  {d.name}" for d in DEPARTMENTS]
@@ -66,7 +66,6 @@ def _render_sidebar() -> Department:
         )
         department = DEPARTMENTS[dept_index]
 
-        st.divider()
         st.caption("📑 Document type is detected automatically on upload.")
 
         manager = _manager()
@@ -77,10 +76,11 @@ def _render_sidebar() -> Department:
                 manager.clear()
                 st.rerun()
 
-        # Development-only Gemini key status (hidden in production; no key values).
-        if settings.dev_mode and config.gemini_key_manager.has_keys():
+        # Development-only AI Gateway status (hidden in production; no key
+        # values). Shows the current model, key number, retries, and health.
+        if settings.dev_mode and config.ai_gateway.has_capacity():
             st.divider()
-            ui.render_key_status(config.gemini_key_manager.status())
+            ui.render_gateway_status(config.ai_gateway.status())
 
     return department
 
@@ -95,17 +95,15 @@ def _process_uploads(department: Department, uploaded_files: list) -> None:
     """Classify and extract each uploaded document with a progress indicator."""
     manager = _manager()
 
-    # A new processing action is a fresh attempt: clear any key-exhaustion flags
-    # from a previous run so every key is reconsidered. Keys that hit a rate
-    # limit during THIS batch stay skipped for the remainder of the batch.
-    config.gemini_key_manager.reset_health()
-
+    # Key health is managed per-request by the AI gateway (it reconsiders every
+    # key and model on each call), so no batch-level reset is needed here.
     classifier = build_classifier()
 
     # Department-scoped candidates first; fall back to all processors so a
     # mis-filed document can still be detected.
     candidates = processors_for_department(department.key) or all_processors()
 
+    ui.section_heading("⚡ Processing Queue")
     progress = st.progress(0.0, text="Starting…")
     total = len(uploaded_files)
 
@@ -129,6 +127,7 @@ def _process_uploads(department: Department, uploaded_files: list) -> None:
             mime_type=mime_type,
         )
 
+        started = time.perf_counter()
         progress.progress((index - 0.5) / total, text=f"Classifying {uploaded.name}…")
         classify_document(doc, classifier, candidates)
 
@@ -136,10 +135,55 @@ def _process_uploads(department: Department, uploaded_files: list) -> None:
             progress.progress((index - 0.25) / total, text=f"Extracting {uploaded.name}…")
             extract_document(doc)
 
+        # Record processing time so the queue / document cards can display it.
+        st.session_state.setdefault("doc_times", {})[doc_id] = time.perf_counter() - started
+
         manager.add(doc)
         progress.progress(index / total, text=f"Processed {uploaded.name}")
 
     progress.empty()
+
+
+def _doc_seconds(doc_id: str) -> float | None:
+    """Return the recorded processing time (seconds) for a document, if any."""
+    return st.session_state.get("doc_times", {}).get(doc_id)
+
+
+def _render_processing_queue() -> None:
+    """Render a premium queue summarizing every processed document."""
+    manager = _manager()
+    docs = manager.documents
+    if not docs:
+        return
+
+    ui.section_heading("📥 Processing Queue")
+    for doc in docs:
+        icon = ui.status_icon(doc.status)
+        seconds = _doc_seconds(doc.doc_id)
+        timing = f"{seconds:.1f} sec" if seconds is not None else "—"
+
+        if doc.status == "done":
+            right = '<span class="igl-check">✓</span>'
+            state = f"Completed · {timing}"
+        elif doc.status == "unsupported":
+            right = '<span class="igl-queue-meta">Unsupported</span>'
+            state = "Skipped"
+        elif doc.status == "error":
+            right = '<span class="igl-queue-meta">Failed</span>'
+            state = "Error"
+        else:
+            right = '<span class="igl-queue-meta">Pending</span>'
+            state = "Queued"
+
+        st.markdown(
+            f'<div class="igl-queue-row">'
+            f'<span class="igl-queue-ico">{icon}</span>'
+            f'<div style="flex:1;">'
+            f'<div class="igl-queue-name">{doc.filename}</div>'
+            f'<div class="igl-queue-meta">{state}</div>'
+            f"</div>{right}</div>",
+            unsafe_allow_html=True,
+        )
 
 
 def _render_batch_downloads() -> None:
@@ -149,7 +193,7 @@ def _render_batch_downloads() -> None:
     if len(processed) < 1:
         return
 
-    st.markdown("### Batch Export")
+    ui.section_heading("📦 Batch Export")
     c1, c2, c3 = st.columns(3)
     with c1:
         st.download_button(
@@ -185,17 +229,8 @@ def _render_documents() -> None:
         st.info("Upload one or more documents and click **Process Documents**.")
         return
 
-    labels = []
-    for doc in docs:
-        if doc.status == "done":
-            icon = "✅"
-        elif doc.status == "unsupported":
-            icon = "🚫"
-        elif doc.status == "error":
-            icon = "⚠️"
-        else:
-            icon = "⏳"
-        labels.append(f"{icon} {doc.filename}")
+    ui.section_heading("📄 Documents")
+    labels = [f"{ui.status_icon(doc.status)} {doc.filename}" for doc in docs]
 
     tabs = st.tabs(labels)
     for tab, doc in zip(tabs, docs):
@@ -212,14 +247,25 @@ def _render_documents() -> None:
 
 
 def _render_document_header(doc: DocumentState) -> None:
-    """Render the classification summary card for a document."""
+    """Render the premium classification summary card for a document."""
     method = "AI" if doc.classification_method == "ai" else "Keywords"
+    score = doc.classification_confidence
+    band_name = _cls_band(score)
+    seconds = _doc_seconds(doc.doc_id)
+    timing = f" · {seconds:.1f} sec" if seconds is not None else ""
+
     st.markdown(
-        f'<div class="igl-card">'
-        f'<div class="igl-card-title">Detected Document Type</div>'
-        f'<span class="igl-doc-tab">{doc.document_type}</span>'
-        f'  {ui.confidence_chip(doc.classification_confidence, _cls_band(doc.classification_confidence))}'
-        f'  <span class="igl-metric-label">via {method}</span>'
+        f'<div class="igl-doc-head">'
+        f'<div class="igl-doc-icon">{ui.status_icon(doc.status)}</div>'
+        f'<div style="flex:1;min-width:200px;">'
+        f'<div class="igl-card-title" style="margin-bottom:4px;">Detected Document Type</div>'
+        f'<div class="igl-doc-type">{doc.document_type}</div>'
+        f'<div class="igl-doc-meta">Classified via {method}{timing}</div>'
+        f'</div>'
+        f'<div style="min-width:160px;">'
+        f'{ui.confidence_chip(score, band_name)}'
+        f'{ui.confidence_meter(score, band_name)}'
+        f'</div>'
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -252,17 +298,34 @@ def main() -> None:
             "restart the application."
         )
 
+    _render_upload_hint()
     uploaded_files = st.file_uploader(
         f"Upload documents for {department.name} (PDF or image)",
         type=_SUPPORTED_TYPES,
         accept_multiple_files=True,
+        label_visibility="collapsed",
     )
 
-    if uploaded_files and st.button("Process Documents", type="primary"):
+    if uploaded_files and st.button("⚡ Process Documents", type="primary"):
         _process_uploads(department, uploaded_files)
 
+    _render_processing_queue()
     _render_batch_downloads()
     _render_documents()
+
+
+def _render_upload_hint() -> None:
+    """Render the premium, centered drag-and-drop hint above the uploader."""
+    types = ["Purchase Orders", "Invoices", "Shipping Bills", "Scanned PDFs", "Images"]
+    chips = "".join(f"<span>{t}</span>" for t in types)
+    st.markdown(
+        f'<div class="igl-upload-hint">'
+        f'<div class="glyph">📄</div>'
+        f'<div class="ttl">Drop Documents Here</div>'
+        f'<div class="types">{chips}</div>'
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
 
 if __name__ == "__main__":

@@ -19,8 +19,7 @@ from typing import Any
 from google import genai
 from google.genai import types
 
-from api_key_manager import GeminiKeyManager, NoApiKeysConfigured
-from gemini_errors import run_with_rotation
+from ai_gateway import AIGateway
 from utils.helpers import read_text_file
 from utils.json_handler import load_schema, parse_model_json
 
@@ -63,46 +62,47 @@ class GeminiExtractionError(RuntimeError):
 
 
 class GeminiClient:
-    """Client boundary for extracting Purchase Order data via Google Gemini.
+    """Client boundary for extracting document data via Google Gemini.
 
-    Attributes:
-        model: The Gemini model identifier to use for extraction.
+    The client never selects a model or key itself. It builds the extraction
+    instruction and delegates execution to the shared :class:`AIGateway`, which
+    chooses the model + key and retries transparently across all of them. This
+    keeps every processor on the same failover policy.
     """
 
     def __init__(
         self,
-        key_manager: GeminiKeyManager,
+        gateway: AIGateway,
         system_prompt_path: Path,
         extraction_prompt_path: Path,
         schema_path: Path,
-        model: str = "gemini-2.5-flash",
     ) -> None:
         """Initialize the client and load prompts and schema from disk.
 
-        Keys are never read directly here; they are obtained through the key
-        manager at request time so rate-limit rotation can occur transparently.
+        Keys and models are never chosen here; the gateway selects them at
+        request time so key + model failover can occur transparently. Models are
+        not hardcoded in this extraction engine — they come from the gateway.
 
         Args:
-            key_manager: The Gemini API key manager (sole source of keys).
+            gateway: The shared Enterprise AI Gateway (sole AI entry point).
             system_prompt_path: Path to the system prompt file.
             extraction_prompt_path: Path to the extraction prompt file.
-            schema_path: Path to the canonical Purchase Order schema.
-            model: Gemini model identifier.
+            schema_path: Path to the canonical document schema.
 
         Raises:
             GeminiExtractionError: If no API keys are configured.
         """
-        try:
-            key_manager.require_keys()
-        except NoApiKeysConfigured as exc:
-            raise GeminiExtractionError(str(exc)) from exc
+        if not gateway.has_capacity():
+            raise GeminiExtractionError(
+                "No Gemini API keys configured. Set GEMINI_API_KEY or "
+                "GEMINI_API_KEY_1, GEMINI_API_KEY_2, ... in the .env file."
+            )
 
-        self.model = model
-        self._keys = key_manager
+        self._gateway = gateway
         self._system_prompt = read_text_file(system_prompt_path)
         self._extraction_prompt = read_text_file(extraction_prompt_path)
         self._schema = load_schema(schema_path)
-        logger.info("GeminiClient initialized with model '%s'.", model)
+        logger.info("GeminiClient initialized (gateway-backed).")
 
     def _build_instruction(self, with_confidence: bool = False) -> str:
         """Combine the extraction prompt with the canonical schema.
@@ -130,19 +130,19 @@ class GeminiClient:
     def _generate(
         self, document_bytes: bytes, mime_type: str, with_confidence: bool
     ) -> dict[str, Any]:
-        """Run a Gemini extraction call, rotating keys on rate limits.
+        """Run an extraction call through the gateway with key + model failover.
 
-        The request is retried across all available API keys transparently; the
-        caller never needs to re-upload the document. Rate-limit detection and
-        rotation are handled by :func:`gemini_errors.run_with_rotation`.
+        The request is retried transparently across all configured models and
+        API keys by the gateway; the caller never re-uploads the document.
+        Retryable vs. fatal classification is centralized in the gateway.
         """
         document_part = types.Part.from_bytes(data=document_bytes, mime_type=mime_type)
         instruction = self._build_instruction(with_confidence)
 
-        def _call(api_key: str) -> str:
+        def _call(api_key: str, model: str) -> str:
             client = genai.Client(api_key=api_key)
             response = client.models.generate_content(
-                model=self.model,
+                model=model,
                 contents=[instruction, document_part],
                 config=types.GenerateContentConfig(
                     system_instruction=self._system_prompt,
@@ -155,9 +155,10 @@ class GeminiClient:
                 raise GeminiExtractionError("Gemini returned no text output.")
             return text
 
-        # Non-rate-limit errors propagate; AllKeysExhausted carries the friendly
-        # message. Only the rotation-exhausted and parse paths are reshaped here.
-        raw_text = run_with_rotation(self._keys, _call)
+        # The gateway raises AIServiceUnavailable when every model/key is
+        # exhausted, and re-raises fatal errors unchanged. Only the JSON parse
+        # path is reshaped here.
+        raw_text = self._gateway.generate(_call)
 
         try:
             return parse_model_json(raw_text)

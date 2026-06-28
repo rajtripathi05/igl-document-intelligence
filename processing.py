@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import logging
 
-from api_key_manager import AllKeysExhausted
+from ai_gateway import AIServiceUnavailable
 from classifier import DocumentClassifier
-from config import gemini_key_manager, settings
+from config import ai_gateway
 from document_state import DocumentState
 from gemini import GeminiExtractionError
 from processors.base import BaseProcessor
@@ -71,9 +71,13 @@ def extract_document(doc: DocumentState) -> None:
         doc.issues = doc.processor.validate(normalized)
         doc.status = "done"
         logger.info("Extracted '%s' as %s.", doc.filename, doc.document_type)
-    except AllKeysExhausted as exc:
-        # Friendly, non-sensitive message; every key is rate-limited.
-        logger.warning("Extraction halted for %s: all keys rate-limited.", doc.filename)
+    except AIServiceUnavailable as exc:
+        # Every model/key was exhausted across all retry cycles. Surface the
+        # clean, non-sensitive "AI Service Temporarily Unavailable" message.
+        logger.warning(
+            "Extraction halted for %s: AI service temporarily unavailable.",
+            doc.filename,
+        )
         doc.status = "error"
         doc.error = str(exc)
     except (GeminiExtractionError, ValueError) as exc:
@@ -83,7 +87,5 @@ def extract_document(doc: DocumentState) -> None:
 
 
 def build_classifier() -> DocumentClassifier:
-    """Construct a classifier from application settings."""
-    return DocumentClassifier(
-        key_manager=gemini_key_manager, model=settings.gemini_model
-    )
+    """Construct a classifier backed by the shared AI gateway."""
+    return DocumentClassifier(gateway=ai_gateway)

@@ -77,13 +77,25 @@ will be added in a later implementation phase.
 
 ## Environment Variables
 
-Create a `.env` file from `.env.example`:
+Create a `.env` file with one or more API keys and (optionally) a model
+priority list. The Enterprise AI Gateway automatically fails over across every
+key and model before reporting a failure.
 
 ```text
-GEMINI_API_KEY=YOUR_API_KEY_HERE
+# One key is enough; add more for automatic failover.
+GEMINI_API_KEY_1=YOUR_FIRST_KEY
+GEMINI_API_KEY_2=YOUR_SECOND_KEY
+# ... up to GEMINI_API_KEY_N
+
+# Optional model priority order (tried top to bottom).
+GEMINI_MODEL_1=gemini-2.5-flash
+GEMINI_MODEL_2=gemini-2.5-flash-lite
+GEMINI_MODEL_3=gemini-2.5-flash-preview
 ```
 
-API keys must be stored in `.env` and must never be hardcoded.
+A single bare `GEMINI_API_KEY` / `GEMINI_MODEL` is still supported for backward
+compatibility. API keys must be stored in `.env` and never hardcoded; they are
+referenced only by number in logs and the UI, never by value.
 
 ## Current Features
 

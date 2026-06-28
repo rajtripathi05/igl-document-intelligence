@@ -57,7 +57,7 @@ def render_document_workspace(doc: DocumentState) -> None:
         _render_validation(doc)
         _render_summary(doc, spec)
         _render_line_items(doc, spec)
-        with st.expander("Raw JSON"):
+        with st.expander("🧾 Raw JSON"):
             st.json(doc.data)
         _render_export(doc)
 
@@ -104,7 +104,14 @@ def _render_validation(doc: DocumentState) -> None:
             for issue in issues:
                 st.warning(issue)
     else:
-        st.success("Validation passed.")
+        st.markdown(
+            '<div class="igl-queue-row" style="background:rgba(34,197,94,0.10);'
+            'border-color:rgba(34,197,94,0.35);margin-bottom:14px;">'
+            '<span class="igl-check">✓</span>'
+            '<div class="igl-queue-name" style="color:#22C55E;">Validation passed</div>'
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
 
 # ----- Editable summary (confidence-coloured) ---------------------------- #
@@ -114,7 +121,7 @@ def _render_summary(doc: DocumentState, spec: ProcessorSpec) -> None:
     """Render editable, confidence-coloured scalar fields from the spec."""
     data = doc.data
     for section in spec.sections:
-        st.markdown(f"#### {section.title}")
+        ui.section_heading(section.title)
         columns = st.columns(2)
         for index, fspec in enumerate(section.fields):
             with columns[index % 2]:
@@ -161,7 +168,7 @@ def _render_line_items(doc: DocumentState, spec: ProcessorSpec) -> None:
         return
     items = get_path(doc.data, spec.line_items_path) or []
 
-    st.markdown("#### Line Items")
+    ui.section_heading("Line Items")
     if spec.line_item_columns:
         column_order = [c.key for c in spec.line_item_columns]
         frame = pd.DataFrame(items)
@@ -189,7 +196,7 @@ def _render_export(doc: DocumentState) -> None:
 
     Re-export uses the current (edited) data — Gemini is never called again.
     """
-    st.markdown("#### Export")
+    ui.section_heading("⬇️ Export")
     col_json, col_excel = st.columns(2)
     with col_json:
         st.download_button(

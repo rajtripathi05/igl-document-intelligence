@@ -18,7 +18,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from config import gemini_key_manager, settings
+from config import ai_gateway, settings
 from excel_shipping_bill import ShippingBillExcelGenerator
 from gemini import GeminiClient
 from processors.base import BaseProcessor
@@ -167,11 +167,10 @@ class ShippingBillProcessor(BaseProcessor):
     def build_client(self) -> GeminiClient:
         """Construct a Gemini client configured for Shipping Bills."""
         return GeminiClient(
-            key_manager=gemini_key_manager,
+            gateway=ai_gateway,
             system_prompt_path=settings.shipping_bill_system_prompt_path,
             extraction_prompt_path=settings.shipping_bill_extraction_prompt_path,
             schema_path=settings.shipping_bill_schema_path,
-            model=settings.gemini_model,
         )
 
     def validate(self, data: dict[str, Any]) -> list[str]:
