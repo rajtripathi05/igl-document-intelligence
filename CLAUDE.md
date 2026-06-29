@@ -4,213 +4,200 @@
 
 An AI-powered Intelligent Document Processing (IDP) platform that converts
 business documents from any vendor or format into standardized, ERP-ready
-structured JSON and Excel.
+structured data and Excel registers.
 
-Built for **India Glycols Limited** to serve multiple departments. The platform
-is a plugin system: each document type is an independent, self-contained
-processor that plugs into a shared engine. It is designed to scale to hundreds
-of document processors without architectural changes.
+Built for **India Glycols Limited** across multiple departments. The platform is
+a **plugin system**: each document type is an independent, self-contained
+processor folder discovered automatically from the filesystem. It is designed to
+scale to hundreds of processors with **no architectural changes** — adding a
+processor means adding a folder (or using the Admin panel).
 
 Long-term goal: SAP integration.
 
-## Current Status — Version 1.2
+## Current Status — Version 2.0
 
-Live, working processors:
+Live (production) processors:
 
-- **Procurement → Purchase Order**
+- **Store → IGP** (Inward Gate Pass)
+- **Marketing → Sales Order** (the migrated Purchase Order engine; key remains
+  `purchase_order` internally, business label is "Sales Order")
 - **Export → Shipping Bill**
+
+Every other business process across the 11 departments is registered as
+**coming soon** and renders a placeholder until built.
 
 Platform capabilities (work automatically for every processor):
 
-1. Department selection
-2. Multi-document upload (PDF / image)
-3. **Automatic document classification** — AI detects the document type and
-   routes to the correct processor (no manual document-type selection)
-4. AI extraction via Google Gemini using per-processor prompts + schema
-5. **Field-level confidence scores** (hybrid: AI-reported + heuristic fallback)
-6. **Color-coded confidence** (green 95–100, yellow 70–94, red 0–69)
-7. **Editable extraction** — every field and line item is editable; edits update
-   the standardized JSON live
-8. **Re-export** — regenerate JSON / Excel from edited data without calling AI again
-9. **Document preview** — PDF/image preview with page thumbnails; toggle between
-   Original Document and Extracted Data
-10. **Multiple-document handling** — each document keeps its own file, processor,
-    confidence, validation, JSON, and Excel; per-document and batch downloads
-    (Download All JSON / All Excel / ZIP)
-11. **OCR understanding** — handwriting, mobile photos, low-quality scans, rotated
-    pages, stamps, and business abbreviations (Qty→Quantity, etc.)
+1. **Two modes** — **Manual** (Department → Business Process → upload; highest
+   accuracy, the default) and **Auto Detect** (Department → upload → the AI picks
+   the process).
+2. Multi-document upload (PDF / image), each processed independently.
+3. **Manifest-driven auto-discovery** — processors are discovered from
+   `processors/<key>/manifest.json`; no hardcoded registration or routing.
+4. **OCR preprocessing** — auto-orient, deskew, denoise, contrast (scanned PDFs
+   are rasterized to enhanced page images; digital PDFs pass through).
+5. AI extraction via Google Gemini using per-processor prompts + schema, with
+   **multi-page** handling (all pages = one logical document) and **handwriting**
+   preference.
+6. **Validation → Auto-Fix → Export** — deterministic auto-fix (date/number
+   normalization, etc.) reports each correction with a confidence score before
+   validation; the reviewer resolves only what remains.
+7. **Field-level + overall confidence** (green 95–100, yellow 75–94, red < 75).
+8. **Editable review** — every field/line item is editable; edits update the
+   standardized JSON live (re-export needs no AI).
+9. **Excel registers** — ONE workbook per document type, **one row per uploaded
+   PDF**, styled to match the uploaded business template (header styling, fonts,
+   borders, widths, merged cells preserved). Per-document Excel is also kept.
+10. **Extraction cache** — repeat uploads reuse the cached result and skip Gemini.
+11. **Operational dashboards (Developer Mode)** — Processing History (with
+    register re-download), Audit Trail (AI value → user value), Cost (tokens →
+    ₹ estimate per processor/department/month), and Processor Health.
+12. **Admin panel** — onboard a processor by uploading its prompt/schema/template/
+    samples; lifecycle **draft → testing → production**.
+13. **AI Gateway** — multiple API keys + multiple models with automatic rotation,
+    model fallback, and graceful failover (unchanged from V1).
 
 ## Technology
 
-- Python 3.11+
-- Streamlit
+- Python 3.11+, Streamlit
 - Google Gemini API (`google-genai` SDK)
-- OpenPyXL (Excel generation)
-- Pandas (editable line-item tables)
-- PyMuPDF (PDF preview + quick text for classification)
+- OpenPyXL (Excel registers + per-doc workbooks), Pandas (editable tables)
+- PyMuPDF (preview + scanned-PDF rasterization + text probe)
+- Pillow (+ optional OpenCV `opencv-python-headless` for deskew/denoise)
 - python-dotenv
 
 ## Architecture
 
 ```text
-Select Department
-    |
-    v
+Mode: Manual (Department → Business Process)   |   Auto Detect (Department)
+        |
+        v
 Upload Document(s)
-    |
-    v
-Document Classifier  ──>  detects document type from processor metadata
-    |
-    v
-Processor Registry   ──>  routes to the matching processor (or "Unsupported")
-    |
-    v
-AI Gateway           ──>  single AI entry point; key + model failover
-    |
-    v
-Gemini Extraction    ──>  business data + per-field confidence (AI)
-    |
-    v
-Normalize to Schema  ──>  schema is the single source of truth
-    |
-    v
-Generic Engine       ──>  confidence display, editing, preview, validation
-    |
-    v
-Re-export            ──>  JSON + Excel (edited data, no AI re-call)
-    |
-    v
+        |
+        v
+OCR Preprocess  ──>  orient / deskew / denoise / enhance (scanned)
+        |
+        v
+Route  ──>  Manual: assign chosen processor   |   Auto: classify (production only)
+        |
+        v
+AI Gateway → Gemini Extraction  ──>  business data + per-field confidence
+        |
+        v
+Normalize to Schema → Auto-Fix → Validate
+        |
+        v
+Generic Engine  ──>  overall + field confidence, editing, preview, audit
+        |
+        v
+Export  ──>  per-type Excel Register (1 row / PDF) + per-document Excel
+        |
+        v
 SAP Integration (Future)
 ```
 
-### Plugin model
+### Plugin model (manifest-driven)
 
-A processor is **declarative**. It exposes a `ProcessorSpec` (fields, sections,
-line-item columns, classification keywords, AI description) plus a Gemini client,
-schema path, validation function, and Excel generator. It does **not** render its
-own UI — the generic engine renders every feature uniformly.
+A processor is a **folder** `processors/<key>/` described by a `manifest.json`
+(metadata, lifecycle status, classification keywords/description, review
+sections, line-item columns, and the register export mapping). One generic
+`FolderProcessor` turns any such folder into a live processor; optional
+`validator.py` / `exporter.py` in the folder override the generic behaviour.
 
 Adding a new document type requires only:
 
-1. Add prompts under `prompts/`.
-2. Add a JSON schema under `schemas/`.
-3. Add a validation module under `utils/` (its own rules).
-4. Add an Excel generator (its own module).
-5. Add a processor under `processors/` implementing `BaseProcessor` with a `ProcessorSpec`.
-6. Register it in `processors/bootstrap.py` (one line).
+1. Create `processors/<key>/` with a `manifest.json`.
+2. Add `schema/schema.json` and `prompts/v1/{system,extraction}_prompt.txt`.
+3. (Optional) Add `validator.py` (`validate` / `auto_fix`) and/or `exporter.py`.
+4. (Optional) Add a styled `templates/…` workbook and reference it in the manifest.
 
-No existing processor, prompt, schema, or the engine is modified. The new
-processor automatically inherits classification, confidence, editing, preview,
-re-export, validation, multi-upload, and downloads.
+No existing processor, the registry, the engine, or `app.py` is modified — the
+processor is discovered on the next run. The **Admin panel** does all of this
+from the UI.
 
 ## Folder & Module Responsibilities
 
 ### Application shell / engine
-- `app.py`: Orchestration shell — department nav, multi-upload, premium
-  drag-and-drop upload, animated processing queue, per-document tabs, batch
-  downloads. No document-specific logic.
-- `engine.py`: Generic engine. Renders confidence-scored editable fields, line
-  items, preview/data toggle, validation, and per-document export for any
-  processor — driven by its `ProcessorSpec`.
-- `processing.py`: Per-document orchestration (classify → extract → confidence →
-  normalize → validate). The only place Gemini is called.
-- `classifier.py`: Automatic document classifier (AI primary, keyword fallback),
-  driven entirely by processor metadata.
-- `document_state.py`: `DocumentState` (per-document state) and `DocumentManager`
-  (collection + batch JSON/Excel/ZIP downloads).
-- `preview.py`: PDF/image preview rendering (PyMuPDF thumbnails + full pages).
-- `ui.py`: India Glycols branding and the premium enterprise design system
-  (~70% SAP Fiori, ~30% Apple HIG) — global theme/CSS, header, sidebar brand
-  lockup, breadcrumbs, section headings, confidence chips/meters, the AI Gateway
-  dashboard card, processing-queue/document-status helpers, and subtle
-  animations. The navigation is the Department selector; the sidebar shows no
-  decorative (non-routing) nav items.
-- `config.py`: Environment + path configuration and the shared singletons
-  (`gemini_key_manager`, `ai_gateway`). Secrets read from env only.
-- `ai_gateway.py`: **Enterprise AI Gateway** — the single entry point for every
-  AI request. Fails over across both API keys and Gemini models before reporting
-  failure (immediate key/model rotation; exponential backoff only between full
-  retry cycles, max 3). Discovers the configurable model priority list
-  (`GEMINI_MODEL_1..N`). Exposes a non-sensitive status snapshot for the dev UI.
-- `api_key_manager.py`: Discovers/rotates/tracks API keys. No module reads key
-  env vars directly. Keys are referenced only by number, never by value.
-- `gemini_errors.py`: Retryable-vs-fatal error classification used by the gateway.
-- `gemini.py`: Google Gemini client boundary. Document-agnostic extraction
-  (`extract`, `extract_with_confidence`). Builds the instruction and delegates
-  execution to the gateway — it never selects a key or model itself. OCR/
-  confidence guidance is appended at call time so prompt files are never modified.
-
-### Per-document-type boundaries
-- `excel.py`: Purchase Order Excel generator.
-- `excel_shipping_bill.py`: Shipping Bill Excel generator.
+- `app.py`: Orchestration shell — mode toggle, department/business-process
+  navigation, upload, processing queue, per-type register downloads, document
+  tabs, and the Developer-Mode History / Cost & Health / Admin views.
+- `engine.py`: Generic engine — overall + field confidence, auto-fix notes,
+  editable fields/line items, preview, validation, audit, per-document export.
+- `processing.py`: Per-document orchestration (preprocess → cache → classify or
+  assign → extract → auto-fix → normalize → validate). The only place Gemini is
+  called. `process_batch(progress_cb)` is UI-decoupled (background-ready).
+- `classifier.py`: Auto-Detect classifier (AI primary, keyword fallback), driven
+  by processor metadata.
+- `preprocess.py`: OCR preprocessing (Pillow baseline + optional OpenCV).
+- `cache.py`: Extraction cache (sha1 + processor + prompt version).
+- `cost.py`: Token capture + ₹ estimate + per processor/department/month rollup.
+- `history.py`: Per-batch processing log + saved registers for re-download.
+- `admin.py`: Processor onboarding + lifecycle management (no code).
+- `consolidated_excel.py`: One-row-per-PDF registers; preserves template styling
+  via header-name matching; per-type workbooks (ZIP for multi-type batches).
+- `document_state.py`: `DocumentState` (per-document state incl. auto-fix notes,
+  audit, usage) and `DocumentManager` (collection + batch downloads).
+- `preview.py`: PDF/image preview rendering.
+- `ui.py`: India Glycols branding + premium design system (~70% SAP Fiori,
+  ~30% Apple HIG). No business logic.
+- `config.py`: App config + shared singletons (`gemini_key_manager`,
+  `ai_gateway`). Secrets from env only.
+- `ai_gateway.py` / `api_key_manager.py` / `gemini_errors.py`: AI Gateway
+  (key + model failover), key discovery/rotation, error classification.
+- `gemini.py`: Gemini client boundary; accepts raw bytes or preprocessed image
+  parts; captures token usage; delegates execution to the gateway.
 
 ### Plugin framework
-- `processors/base.py`: `BaseProcessor` interface (the only shared contract).
-- `processors/spec.py`: `ProcessorSpec`, `FieldSpec`, `SectionSpec`,
-  `LineItemColumn`, and dotted-path helpers.
-- `processors/registry.py`: Processor registry + department/use-case lookups.
-- `processors/bootstrap.py`: Single place all processors are registered.
-- `processors/purchase_order.py`: Purchase Order processor (declarative).
-- `processors/shipping_bill.py`: Shipping Bill processor (declarative).
+- `processors/base.py`: `BaseProcessor` interface (spec, build_client,
+  schema_path, validate, auto_fix, build_excel_bytes, build_row).
+- `processors/spec.py`: `ProcessorSpec` (+ `ExportSpec`, `FieldSpec`, …),
+  `from_manifest`, dotted-path + export-value helpers.
+- `processors/folder_processor.py`: `FolderProcessor` — manifest-driven plugin.
+- `processors/discovery.py`: Filesystem discovery of all manifests.
+- `processors/bootstrap.py`: `bootstrap_processors()` / `refresh_processors()`.
+- `processors/registry.py`: Registry + department/status lookups.
+- `processors/generic_validator.py`: Spec-driven validate + deterministic auto-fix.
+- `processors/generic_exporter.py`: Spec-driven per-document workbook.
+
+### Per-processor folder (`processors/<key>/`)
+- `manifest.json`: Single source of metadata (versioned).
+- `schema/schema.json`: Explicit, hand-authored output schema.
+- `prompts/v1/{system,extraction}_prompt.txt`: Versioned prompts.
+- `validator.py` (optional): `validate(data)` and/or `auto_fix(data)`.
+- `exporter.py` (optional): `build_excel_bytes(data)`.
+- `templates/`, `samples/{raw,expected_json,expected_excel}/`, `README.md`.
 
 ### Shared utilities
-- `utils/confidence.py`: Hybrid confidence engine (AI map + heuristics).
-- `utils/validators.py`: Purchase Order validation + schema normalization.
-- `utils/shipping_bill_validators.py`: Shipping Bill validation engine.
-- `utils/json_handler.py`: JSON parse/load/serialize/save.
-- `utils/file_handler.py`: MIME detection, slugs, output paths.
-- `utils/helpers.py`: Logging config, file reads, formatting.
+- `utils/confidence.py`: Hybrid confidence engine + bands + `overall_confidence`.
+- `utils/validators.py`: Shared `normalize_to_schema` (document-agnostic).
+- `utils/json_handler.py`, `utils/file_handler.py`, `utils/helpers.py`.
 
-### Data & assets
-- `departments.py`: Department / use-case registry.
-- `prompts/`: Per-processor AI prompts (read from files, never hardcoded).
-- `schemas/`: Per-processor JSON schemas (single source of truth).
-- `samples/`: Test documents used during development.
-- `templates/`: SAP Excel templates / mapping templates (future).
-- `assets/`: Static assets. Drop `logo.png` here to brand the header.
-- `outputs/`: Generated JSON/Excel (git-ignored; not committed).
+### Data
+- `departments.py`: Static 11-department catalog (processes grouped from manifests).
+- `outputs/`: Generated artifacts, cache, usage, history (git-ignored).
+- `assets/`: Branding (drop `logo.*`).
 
-## Coding Principles
+## Coding Principles & Non-Negotiable Rules
 
-- Clean architecture, modular design, single responsibility
-- Separate UI from business logic; separate Gemini, validation, and Excel
-- Never hardcode prompts or API keys
-- Read prompts from `prompts/`, schema from `schemas/`, API key from `.env`
-- Type hints, docstrings, error handling, logging
-- Readability over cleverness; extensible design
-
-## Non-Negotiable Rules
-
-- Gemini ONLY extracts business information (and reports confidence).
-- ALL AI requests go through the `ai_gateway` single entry point. No processor,
-  the classifier, or any future module talks to Gemini (`genai`) directly except
-  inside the gateway-supplied `call(api_key, model)` closure.
-- Models are configurable (`GEMINI_MODEL_1..N`) and never hardcoded in the
-  extraction engine — only the gateway/config know default models.
-- Python performs validation, transformation, and Excel generation.
+- Clean architecture, modular, single responsibility; UI separate from logic.
+- Gemini ONLY extracts business information (and reports confidence). ALL AI
+  requests go through the `ai_gateway` single entry point.
+- Models are configurable (`GEMINI_MODEL_1..N`), never hardcoded in extraction.
+- Python performs preprocessing, auto-fix, validation, and Excel generation.
 - Excel is ALWAYS generated from standardized JSON, never directly from Gemini.
-- The JSON schema is the single source of truth.
-- Each document type owns its own prompts, schema, validation, and Excel.
+- The JSON schema is the single source of truth; schemas are explicit/hand-authored.
+- Each processor owns its prompts, schema, validation, and export mapping.
 - Processors share only the `BaseProcessor` interface — never each other's logic.
-- Do not modify a schema without maintaining backward compatibility.
+- API key values are never logged, displayed, saved, or placed in exceptions.
 
 ## Setup & Run
 
 ```bash
 pip install -r requirements.txt
-# Create .env with one or more keys and (optionally) a model priority list:
-#   GEMINI_API_KEY_1=your_key       (add GEMINI_API_KEY_2 ... _N for failover)
-#   GEMINI_MODEL_1=gemini-2.5-flash (add GEMINI_MODEL_2 ... _N, tried in order)
-#   GEMINI_MODEL_2=gemini-2.5-flash-lite
-#   ...                             (numbering is open-ended; e.g. up to _10)
-# The AI Gateway fails over across all keys and models automatically.
+# .env with one or more keys and (optionally) a model priority list:
+#   GEMINI_API_KEY_1=...   (add _2 ... _N for failover)
+#   GEMINI_MODEL_1=gemini-2.5-flash   (add _2 ... _N, tried in order)
+# Optional cost rates: GEMINI_INPUT_COST_PER_1K_INR, GEMINI_OUTPUT_COST_PER_1K_INR
+# APP_ENV=production hides Developer Mode by default.
 streamlit run app.py
 ```
-
-## Future Roadmap
-
-- More Export document types (Commercial Invoice, Packing List, Bill of Lading,
-  Certificate of Origin, Export Invoice, Export Declaration, Customs Documents)
-- More departments (Sales, Finance/Accounts, HR, Operations, Mechanical, Chemical)
-- SAP Excel templates and SAP mapping per processor
-- SAP integration

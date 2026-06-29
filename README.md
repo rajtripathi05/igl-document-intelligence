@@ -72,9 +72,13 @@
 business teams that need clean, reviewable, ERP-ready data from unstructured
 documents.
 
-It currently supports Purchase Orders and Export Shipping Bills, with a generic
-processor architecture designed for fast expansion into more departments and
-document types.
+**Version 2.0** is a manifest-driven, auto-discovering plugin platform. It runs
+in **Manual** mode (Department → Business Process — the accurate default) or
+**Auto Detect** mode (the AI picks the process). Live processors today are
+**Store → IGP**, **Marketing → Sales Order**, and **Export → Shipping Bill**;
+every other process across 11 departments is registered as *coming soon*.
+Adding a processor is just adding a folder with a `manifest.json` (or using the
+built-in Admin panel) — no code changes and no hardcoded routing.
 
 ---
 
@@ -124,18 +128,28 @@ document types.
     <th>Exports</th>
   </tr>
   <tr>
-    <td><b>Procurement / Marketing</b></td>
-    <td>Purchase Order</td>
-    <td><img src="https://img.shields.io/badge/Active-22C55E?style=flat-square" alt="Active" /></td>
+    <td><b>Store</b></td>
+    <td>IGP (Inward Gate Pass)</td>
+    <td><img src="https://img.shields.io/badge/Production-22C55E?style=flat-square" alt="Production" /></td>
     <td>Fields, line items, confidence, validation, preview</td>
-    <td>JSON, XLSX, ZIP</td>
+    <td>Excel Register, per-doc XLSX</td>
+  </tr>
+  <tr>
+    <td><b>Marketing</b></td>
+    <td>Sales Order</td>
+    <td><img src="https://img.shields.io/badge/Production-22C55E?style=flat-square" alt="Production" /></td>
+    <td>Fields, line items, confidence, validation, preview</td>
+    <td>Excel Register, per-doc XLSX</td>
   </tr>
   <tr>
     <td><b>Export</b></td>
     <td>Shipping Bill</td>
-    <td><img src="https://img.shields.io/badge/Active-22C55E?style=flat-square" alt="Active" /></td>
+    <td><img src="https://img.shields.io/badge/Production-22C55E?style=flat-square" alt="Production" /></td>
     <td>Fields, line items, confidence, validation, preview</td>
-    <td>JSON, XLSX, ZIP</td>
+    <td>Excel Register, per-doc XLSX</td>
+  </tr>
+  <tr>
+    <td colspan="5" align="center"><i>Store · Marketing · Finance · Export · Supply Chain · HR · Operations · Mechanical · Chemical · Production · Management — remaining processes register as <b>Coming Soon</b></i></td>
   </tr>
 </table>
 
@@ -175,15 +189,18 @@ flowchart LR
 
 | Module | What It Delivers | Status |
 | --- | --- | --- |
-| Multi-upload queue | Process many PDFs/images in one session | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
-| AI classifier | Routes uploaded files to the right processor | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
-| Keyword fallback | Keeps classification usable if AI classification fails | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
-| Extraction engine | Converts files into schema-shaped JSON | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
-| Confidence layer | Shows field-level confidence bands | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
-| Inline editor | Lets reviewers correct extracted fields and line items | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
-| Validation | Runs document-specific checks after extraction and edits | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
-| Preview | Renders original PDFs/images beside extracted data | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
-| Batch exports | Downloads all JSON, all Excel, or combined ZIP | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
+| Manual + Auto Detect modes | Department → Business Process, or AI-chosen process | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
+| Manifest auto-discovery | Processors loaded from `processors/<key>/manifest.json` | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
+| OCR preprocessing | Auto-orient, deskew, denoise, contrast (scanned PDFs/images) | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
+| Extraction engine | Multi-page, handwriting-aware, schema-shaped JSON | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
+| Auto-Fix | Deterministic repairs with per-fix confidence before validation | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
+| Confidence layer | Overall + field-level confidence bands (95 / 75 thresholds) | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
+| Inline editor + audit | Edit fields/line items; AI→user edits recorded | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
+| Excel registers | One workbook per type, one row per PDF, template styling preserved | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
+| Extraction cache | Repeat uploads skip Gemini (hash + processor + prompt version) | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
+| Dashboards | History (re-download), Cost (₹), Processor Health | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
+| Admin panel | Onboard processors by upload; draft → testing → production | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
+| AI Gateway | Multi-key + multi-model rotation, fallback, graceful failover | ![Ready](https://img.shields.io/badge/Ready-22C55E?style=flat-square) |
 
 ---
 
@@ -356,33 +373,41 @@ mindmap
 
 ```text
 po-processor/
-|-- app.py                         # Streamlit app entry point
+|-- app.py                         # Shell: modes, nav, registers, dashboards
 |-- ai_gateway.py                  # Gemini key/model failover gateway
 |-- api_key_manager.py             # API key discovery and rotation
-|-- classifier.py                  # AI + keyword document classifier
-|-- config.py                      # Settings and filesystem paths
-|-- document_state.py              # Document state and batch exports
+|-- classifier.py                  # AI + keyword document classifier (Auto Detect)
+|-- config.py                      # App settings + shared singletons
+|-- preprocess.py                  # OCR preprocess (orient/deskew/denoise/contrast)
+|-- cache.py                       # Extraction cache (skip Gemini on repeats)
+|-- cost.py                        # Token capture + INR cost rollups
+|-- history.py                     # Per-batch processing log + register re-download
+|-- admin.py                       # Processor onboarding + lifecycle (no code)
+|-- consolidated_excel.py          # One-row-per-PDF registers (template styling)
+|-- document_state.py              # Document state, audit, batch exports
 |-- engine.py                      # Generic review/edit/export workspace
-|-- gemini.py                      # Gemini extraction client
-|-- excel.py                       # Purchase Order Excel export
-|-- excel_shipping_bill.py         # Shipping Bill Excel export
-|-- processing.py                  # Processing orchestration
+|-- gemini.py                      # Gemini client (parts + usage capture)
+|-- processing.py                  # preprocess->classify/assign->extract->auto-fix
 |-- preview.py                     # PDF/image preview rendering
 |-- ui.py                          # Theme and Streamlit UI helpers
-|-- departments.py                 # Department/use-case registry
+|-- departments.py                 # 11-department catalog
 |-- processors/
 |   |-- base.py                    # Processor interface
-|   |-- bootstrap.py               # Processor registration
-|   |-- purchase_order.py          # Purchase Order processor
-|   |-- registry.py                # Processor registry
-|   |-- shipping_bill.py           # Shipping Bill processor
-|   `-- spec.py                    # Declarative processor specs
-|-- prompts/                       # Gemini prompts
-|-- schemas/                       # JSON schemas
-|-- samples/                       # Sample documents
-|-- templates/                     # Excel/template assets
-|-- utils/                         # Validation, JSON, file helpers
+|   |-- spec.py                    # ProcessorSpec + from_manifest + export specs
+|   |-- folder_processor.py        # Manifest-driven plugin
+|   |-- discovery.py               # Filesystem discovery of manifests
+|   |-- bootstrap.py               # Discovery entry point / refresh
+|   |-- registry.py                # Registry + department/status lookups
+|   |-- generic_validator.py       # Spec-driven validate + auto-fix
+|   |-- generic_exporter.py        # Spec-driven per-doc workbook
+|   |-- igp/                       # Store -> IGP (production)
+|   |-- purchase_order/            # Marketing -> Sales Order (production)
+|   |-- shipping_bill/             # Export -> Shipping Bill (production)
+|   `-- <key>/                     # manifest.json, schema/, prompts/v1/,
+|                                  #   validator.py?, exporter.py?, templates/, samples/
+|-- utils/                         # normalize_to_schema, confidence, JSON, files
 |-- assets/                        # Branding assets
+|-- outputs/                       # Generated artifacts, cache, usage, history (git-ignored)
 |-- requirements.txt
 `-- README.md
 ```
@@ -428,17 +453,17 @@ po-processor/
 timeline
     title IGL Document Intelligence Roadmap
     Current
-      : Purchase Order processor
-      : Shipping Bill processor
-      : Generic review workspace
-      : JSON and Excel exports
+      : Manifest-driven auto-discovery + Admin onboarding
+      : IGP, Sales Order, Shipping Bill processors
+      : Manual + Auto Detect modes
+      : OCR preprocess, auto-fix, per-type Excel registers
+      : History, Cost, Health dashboards
     Next
-      : More department processors
-      : Stronger validation rules
-      : ERP-specific Excel mappings
+      : Promote coming-soon processors to production
+      : ERP-specific Excel mappings + regression fixtures
+      : Background batch processing worker
     Later
       : SAP integration hooks
-      : Automated processor tests
       : Deployment packaging
 ```
 

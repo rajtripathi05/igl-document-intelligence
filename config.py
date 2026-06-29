@@ -34,54 +34,11 @@ class Settings:
     dev_mode: bool = os.getenv("APP_ENV", "development").lower() != "production" and (
         os.getenv("DEV_MODE", "true").lower() not in ("0", "false", "no")
     )
-    prompts_dir: Path = BASE_DIR / "prompts"
-    schemas_dir: Path = BASE_DIR / "schemas"
-    templates_dir: Path = BASE_DIR / "templates"
-    samples_dir: Path = BASE_DIR / "samples"
+    # V2.0: prompts/schemas/templates/samples are owned per-processor under
+    # processors/<key>/, discovered from manifests. Only app-level directories
+    # remain here.
     outputs_dir: Path = BASE_DIR / "outputs"
     assets_dir: Path = BASE_DIR / "assets"
-
-    @property
-    def system_prompt_path(self) -> Path:
-        """Path to the system prompt file."""
-        return self.prompts_dir / "system_prompt.txt"
-
-    @property
-    def extraction_prompt_path(self) -> Path:
-        """Path to the extraction prompt file."""
-        return self.prompts_dir / "extraction_prompt.txt"
-
-    @property
-    def schema_path(self) -> Path:
-        """Path to the canonical Purchase Order JSON schema."""
-        return self.schemas_dir / "purchase_order_schema.json"
-
-    # ----- Generic, document-type-agnostic path helpers ------------------ #
-
-    def prompt_path(self, filename: str) -> Path:
-        """Return the path to a prompt file in the prompts directory."""
-        return self.prompts_dir / filename
-
-    def schema_path_for(self, filename: str) -> Path:
-        """Return the path to a schema file in the schemas directory."""
-        return self.schemas_dir / filename
-
-    # ----- Shipping Bill paths ------------------------------------------- #
-
-    @property
-    def shipping_bill_system_prompt_path(self) -> Path:
-        """Path to the Shipping Bill system prompt file."""
-        return self.prompts_dir / "shipping_bill_system_prompt.txt"
-
-    @property
-    def shipping_bill_extraction_prompt_path(self) -> Path:
-        """Path to the Shipping Bill extraction prompt file."""
-        return self.prompts_dir / "shipping_bill_extraction_prompt.txt"
-
-    @property
-    def shipping_bill_schema_path(self) -> Path:
-        """Path to the canonical Shipping Bill JSON schema."""
-        return self.schemas_dir / "shipping_bill_schema.json"
 
 
 settings = Settings()
