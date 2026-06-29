@@ -21,9 +21,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Confidence bands (percent).
+# Confidence bands (percent). V2.0: green 95–100, yellow 75–94, red < 75.
 HIGH_MIN = 95
-REVIEW_MIN = 70
+REVIEW_MIN = 75
 
 #: Key under which a processor's extraction may carry an AI confidence map.
 AI_CONFIDENCE_KEY = "_confidence"
@@ -138,3 +138,21 @@ def summarize(confidence: dict[str, int]) -> dict[str, int]:
     for score in confidence.values():
         counts[band(score)] += 1
     return counts
+
+
+def overall_confidence(confidence: dict[str, int]) -> int:
+    """Return the overall document confidence as the mean of field scores.
+
+    Empty/None fields (score 0) are excluded so a sparsely-populated document is
+    not unfairly penalised; when every field is empty the result is 0.
+
+    Args:
+        confidence: A ``{path: score}`` field-confidence map.
+
+    Returns:
+        The rounded mean field confidence (0–100).
+    """
+    scores = [s for s in confidence.values() if s > 0]
+    if not scores:
+        return 0
+    return int(round(sum(scores) / len(scores)))

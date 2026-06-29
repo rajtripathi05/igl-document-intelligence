@@ -20,6 +20,7 @@ import pandas as pd
 import streamlit as st
 
 import ui
+from config import settings
 from document_state import DocumentState
 from preview import render_document
 from processors.spec import (
@@ -29,9 +30,14 @@ from processors.spec import (
     get_path,
     set_path,
 )
-from utils.confidence import band, field_score
+from utils.confidence import band, field_score, overall_confidence, summarize
 
 logger = logging.getLogger(__name__)
+
+
+def _dev_mode() -> bool:
+    """True when Developer Mode is active (raw JSON / audit are dev-only)."""
+    return bool(st.session_state.get("dev_mode", settings.dev_mode))
 
 
 def render_document_workspace(doc: DocumentState) -> None:
@@ -53,13 +59,31 @@ def render_document_workspace(doc: DocumentState) -> None:
         _render_preview(doc)
 
     with tab_data:
+        _render_overall_confidence(doc)
         ui.confidence_legend()
+        ui.render_autofix_notes(doc.autofix_notes)
         _render_validation(doc)
         _render_summary(doc, spec)
         _render_line_items(doc, spec)
-        with st.expander("🧾 Raw JSON"):
-            st.json(doc.data)
+        if _dev_mode():
+            _render_developer_panels(doc)
         _render_export(doc)
+
+
+def _render_overall_confidence(doc: DocumentState) -> None:
+    """Render the prominent overall document confidence badge + band breakdown."""
+    score = overall_confidence(doc.confidence)
+    ui.overall_confidence_badge(score, band(score), summarize(doc.confidence))
+
+
+def _render_developer_panels(doc: DocumentState) -> None:
+    """Render developer-only panels: raw JSON and the reviewer edit audit trail."""
+    audit = doc.build_audit()
+    if audit:
+        with st.expander(f"📝 Audit trail: {len(audit)} edited field(s)"):
+            st.dataframe(audit, use_container_width=True, hide_index=True)
+    with st.expander("🧾 Raw JSON (developer)"):
+        st.json(doc.data)
 
 
 # ----- Preview ----------------------------------------------------------- #
@@ -192,22 +216,14 @@ def _render_line_items(doc: DocumentState, spec: ProcessorSpec) -> None:
 
 
 def _render_export(doc: DocumentState) -> None:
-    """Render JSON and Excel download buttons for this document.
+    """Render Excel (and, in Developer Mode, JSON) download buttons.
 
     Re-export uses the current (edited) data — Gemini is never called again.
+    Business users see Excel only; raw JSON is exposed only in Developer Mode.
     """
     ui.section_heading("⬇️ Export")
-    col_json, col_excel = st.columns(2)
-    with col_json:
-        st.download_button(
-            "⬇️ Download JSON",
-            data=doc.json_bytes(),
-            file_name=doc.json_filename(),
-            mime="application/json",
-            use_container_width=True,
-            key=f"{doc.doc_id}:dl_json",
-        )
-    with col_excel:
+    columns = st.columns(2) if _dev_mode() else [st.container()]
+    with columns[0]:
         try:
             st.download_button(
                 "⬇️ Download Excel",
@@ -223,6 +239,16 @@ def _render_export(doc: DocumentState) -> None:
         except Exception as exc:  # noqa: BLE001 - surface export errors in UI
             logger.exception("Excel generation failed.")
             st.error(f"Excel generation failed: {exc}")
+    if _dev_mode():
+        with columns[1]:
+            st.download_button(
+                "⬇️ Download JSON (developer)",
+                data=doc.json_bytes(),
+                file_name=doc.json_filename(),
+                mime="application/json",
+                use_container_width=True,
+                key=f"{doc.doc_id}:dl_json",
+            )
 
 
 # ----- Coercion helpers -------------------------------------------------- #

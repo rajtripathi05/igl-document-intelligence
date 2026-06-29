@@ -43,8 +43,8 @@ TAGLINE = "AI-Powered · SAP-Ready Processing"
 # Subtle, enterprise-friendly confidence colours (green / amber / red).
 CONFIDENCE_COLORS = {
     "high": ACCENT,      # green   95-100%  Excellent
-    "review": WARNING,   # amber   70-94%   Needs Review
-    "verify": ERROR,     # red     0-69%    Manual Verification
+    "review": WARNING,   # amber   75-94%   Needs Review
+    "verify": ERROR,     # red     0-74%    Manual Verification
 }
 CONFIDENCE_DOT = {"high": "🟢", "review": "🟡", "verify": "🔴"}
 CONFIDENCE_MEANING = {
@@ -443,6 +443,59 @@ section[data-testid="stSidebar"] .block-container {{ padding-top: 1.4rem; }}
 .igl-section .bar {{ width:4px; height:20px; border-radius:3px;
     background: linear-gradient(180deg, {PRIMARY_LIGHT}, {PRIMARY}); }}
 
+/* ---- Overall document confidence badge ----------------------------- */
+.igl-overall {{
+    display:flex; align-items:center; gap:16px;
+    background: {CARD}; border:1px solid {LINE}; border-radius: var(--radius);
+    padding:16px 20px; margin:4px 0 16px; box-shadow: var(--shadow-sm);
+    animation: igl-rise .45s ease both;
+}}
+.igl-overall-ring {{
+    width:64px; height:64px; border-radius:999px; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center;
+    font-size:18px; font-weight:800; color:#fff;
+}}
+.igl-overall-main {{ flex:1; }}
+.igl-overall-label {{ font-size:11.5px; text-transform:uppercase; letter-spacing:.10em;
+    color:{TEXT_70}; font-weight:700; }}
+.igl-overall-value {{ font-size:20px; font-weight:800; color:{TEXT}; line-height:1.15; }}
+.igl-overall-counts {{ display:flex; gap:14px; font-size:12px; color:{TEXT_70}; margin-top:4px; }}
+
+/* ---- KPI cards ------------------------------------------------------ */
+.igl-kpis {{ display:grid; grid-template-columns: repeat(auto-fit, minmax(150px,1fr)); gap:12px; margin:6px 0 14px; }}
+.igl-kpi {{ background:{CARD}; border:1px solid {LINE}; border-radius: var(--radius-sm);
+    padding:14px 16px; box-shadow: var(--shadow-sm); animation: igl-rise .4s ease both; }}
+.igl-kpi .k {{ font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:{TEXT_40}; }}
+.igl-kpi .v {{ font-size:22px; font-weight:800; color:{TEXT}; margin-top:3px; }}
+.igl-kpi .s {{ font-size:11.5px; color:{TEXT_70}; }}
+
+/* ---- Lifecycle status chips ---------------------------------------- */
+.igl-life {{ display:inline-flex; align-items:center; gap:6px; padding:2px 10px;
+    border-radius:999px; font-size:11px; font-weight:700; }}
+.igl-life.production {{ background:rgba(34,197,94,0.15); color:{ACCENT}; }}
+.igl-life.testing {{ background:rgba(251,191,36,0.15); color:{WARNING}; }}
+.igl-life.draft {{ background:rgba(148,163,184,0.15); color:#94A3B8; }}
+.igl-life.coming_soon {{ background:rgba(59,130,246,0.13); color:{PRIMARY_LIGHT}; }}
+
+/* ---- Coming-soon hero ---------------------------------------------- */
+.igl-soon {{
+    text-align:center; background: linear-gradient(180deg, {CARD_2}, {CARD});
+    border:1px solid {LINE}; border-radius: var(--radius); padding:46px 28px;
+    box-shadow: var(--shadow-sm); animation: igl-rise .45s ease both;
+}}
+.igl-soon .glyph {{ font-size:48px; }}
+.igl-soon .ttl {{ font-size:22px; font-weight:800; color:{TEXT}; margin-top:12px; }}
+.igl-soon .sub {{ font-size:14px; color:{TEXT_70}; margin-top:8px; max-width:520px;
+    margin-left:auto; margin-right:auto; }}
+
+/* ---- Auto-fix note rows -------------------------------------------- */
+.igl-fix {{ display:flex; align-items:center; gap:10px; font-size:13px;
+    padding:8px 12px; border-radius:10px; background:rgba(34,197,94,0.07);
+    border:1px solid rgba(34,197,94,0.18); margin-bottom:8px; }}
+.igl-fix .arrow {{ color:{TEXT_40}; }}
+.igl-fix .old {{ color:{TEXT_70}; text-decoration:line-through; }}
+.igl-fix .new {{ color:{ACCENT}; font-weight:700; }}
+
 /* hide Streamlit chrome for a cleaner enterprise canvas */
 #MainMenu {{ visibility:hidden; }}
 footer {{ visibility:hidden; }}
@@ -482,6 +535,97 @@ def field_label(label: str, score: int, band_name: str) -> None:
     )
 
 
+def overall_confidence_badge(score: int, band_name: str, counts: dict[str, int] | None = None) -> None:
+    """Render the prominent overall document confidence badge.
+
+    Args:
+        score: Overall confidence (0–100).
+        band_name: ``"high"`` / ``"review"`` / ``"verify"``.
+        counts: Optional per-band field counts for the breakdown line.
+    """
+    color = CONFIDENCE_COLORS.get(band_name, "#64748B")
+    meaning = CONFIDENCE_MEANING.get(band_name, "")
+    counts = counts or {}
+    breakdown = (
+        f'<div class="igl-overall-counts">'
+        f'<span>🟢 {counts.get("high", 0)} high</span>'
+        f'<span>🟡 {counts.get("review", 0)} review</span>'
+        f'<span>🔴 {counts.get("verify", 0)} verify</span>'
+        f"</div>"
+        if counts
+        else ""
+    )
+    st.markdown(
+        f'<div class="igl-overall">'
+        f'<div class="igl-overall-ring" style="background:{color};">{score}%</div>'
+        f'<div class="igl-overall-main">'
+        f'<div class="igl-overall-label">Overall Document Confidence</div>'
+        f'<div class="igl-overall-value">{meaning}</div>'
+        f"{breakdown}"
+        f"</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def lifecycle_chip(status: str) -> str:
+    """Return an HTML lifecycle status chip (production/testing/draft/coming_soon)."""
+    label = {
+        "production": "Production",
+        "testing": "Testing",
+        "draft": "Draft",
+        "coming_soon": "Coming Soon",
+    }.get(status, status.title())
+    return f'<span class="igl-life {status}">{label}</span>'
+
+
+def kpi_cards(cards: list[tuple[str, str, str]]) -> None:
+    """Render a responsive grid of KPI cards.
+
+    Args:
+        cards: ``(label, value, subtext)`` tuples.
+    """
+    html = "".join(
+        f'<div class="igl-kpi"><div class="k">{k}</div>'
+        f'<div class="v">{v}</div><div class="s">{s}</div></div>'
+        for k, v, s in cards
+    )
+    st.markdown(f'<div class="igl-kpis">{html}</div>', unsafe_allow_html=True)
+
+
+def render_autofix_notes(notes: list[dict]) -> None:
+    """Render the deterministic auto-fix corrections with their confidence."""
+    if not notes:
+        return
+    with st.expander(f"🛠️ Auto-corrections applied: {len(notes)}", expanded=False):
+        for note in notes:
+            st.markdown(
+                f'<div class="igl-fix">'
+                f'<span>✓</span>'
+                f'<span><b>{note.get("field", "")}</b></span>'
+                f'<span class="old">{note.get("old", "")}</span>'
+                f'<span class="arrow">→</span>'
+                f'<span class="new">{note.get("new", "")}</span>'
+                f'<span style="margin-left:auto;color:rgba(255,255,255,0.4);">'
+                f'{note.get("confidence", "")}% · {note.get("reason", "")}</span>'
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+
+def coming_soon_hero(department_name: str, process_name: str) -> None:
+    """Render a premium 'coming soon' hero for an unbuilt business process."""
+    st.markdown(
+        f'<div class="igl-soon">'
+        f'<div class="glyph">🚧</div>'
+        f'<div class="ttl">{process_name}</div>'
+        f'<div class="sub">This processor is coming soon. The <b>{department_name}</b> '
+        f"module is on the India Glycols Enterprise Document Intelligence roadmap "
+        f"and will be enabled in a future release.</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def confidence_legend() -> None:
     """Render a compact legend explaining the confidence colours."""
     items = "".join(
@@ -489,7 +633,7 @@ def confidence_legend() -> None:
         for b in ("high", "review", "verify")
     )
     ranges = (
-        '<span style="color:rgba(255,255,255,0.40);">95–100 · 70–94 · 0–69</span>'
+        '<span style="color:rgba(255,255,255,0.40);">95–100 · 75–94 · 0–74</span>'
     )
     st.markdown(
         f'<div class="igl-legend">{items}{ranges}</div>',
@@ -523,7 +667,7 @@ def render_header(assets_dir: Path) -> None:
                 <div class="igl-wordmark">India <span class="igl-accent">Glycols</span> Limited</div>
                 <div class="igl-sub">{PLATFORM_NAME}</div>
                 <div class="igl-head-badges">
-                    <span class="igl-tag">Version 1.2</span>
+                    <span class="igl-tag">Version 2.0</span>
                     <span class="igl-tag"><span class="dot"></span>Production Ready</span>
                     <span class="igl-tag"><span class="dot"></span>AI Gateway Online</span>
                     <span class="igl-tag">{TAGLINE}</span>
