@@ -1,0 +1,104 @@
+{
+  "manifest_version": "1.0",
+  "processor_version": "1.0",
+  "schema_version": "1.0",
+  "prompt_version": "v1",
+  "key": "purchase_order",
+  "document_type": "Sales Order",
+  "business_process": "Sales Order",
+  "status": "production",
+  "json_suffix": "sales_order",
+  "department": { "key": "marketing", "name": "Marketing", "icon": "📣", "order": 2 },
+  "keywords": [
+    "purchase order",
+    "po number",
+    "p.o.",
+    "buyer",
+    "supplier",
+    "gst",
+    "hsn",
+    "payment terms"
+  ],
+  "ai_description": "A Purchase Order issued by a buyer to a supplier listing materials, quantities, prices, GST, HSN codes, and payment terms.",
+  "sections": [
+    {
+      "title": "Order",
+      "fields": [
+        { "path": "purchase_order.po_number", "label": "Order Number", "required": true },
+        { "path": "purchase_order.po_date", "label": "Order Date", "kind": "date" },
+        { "path": "purchase_order.supplier_reference", "label": "Supplier Reference" },
+        { "path": "purchase_order.payment_terms", "label": "Payment Terms" },
+        { "path": "purchase_order.currency", "label": "Currency" },
+        { "path": "purchase_order.nature_of_supply", "label": "Nature of Supply" }
+      ]
+    },
+    {
+      "title": "Buyer",
+      "fields": [
+        { "path": "buyer.company_name", "label": "Buyer Company" },
+        { "path": "buyer.gst_number", "label": "Buyer GST" },
+        { "path": "buyer.pan_number", "label": "Buyer PAN" },
+        { "path": "buyer.address", "label": "Buyer Address", "kind": "long_text" }
+      ]
+    },
+    {
+      "title": "Supplier",
+      "fields": [
+        { "path": "supplier.company_name", "label": "Supplier Company" },
+        { "path": "supplier.gst_number", "label": "Supplier GST" },
+        { "path": "supplier.pan_number", "label": "Supplier PAN" },
+        { "path": "supplier.address", "label": "Supplier Address", "kind": "long_text" }
+      ]
+    },
+    {
+      "title": "Summary",
+      "fields": [
+        { "path": "summary.subtotal", "label": "Subtotal", "kind": "number" },
+        { "path": "summary.cgst", "label": "CGST", "kind": "number" },
+        { "path": "summary.sgst", "label": "SGST", "kind": "number" },
+        { "path": "summary.igst", "label": "IGST", "kind": "number" },
+        { "path": "summary.grand_total", "label": "Grand Total", "kind": "number" },
+        { "path": "summary.amount_in_words", "label": "Amount in Words" }
+      ]
+    }
+  ],
+  "line_items": {
+    "path": "items",
+    "columns": [
+      { "key": "line_number", "label": "Line #" },
+      { "key": "material_code", "label": "Material Code" },
+      { "key": "description", "label": "Description" },
+      { "key": "hsn_code", "label": "HSN Code" },
+      { "key": "quantity", "label": "Quantity", "kind": "number" },
+      { "key": "unit", "label": "Unit" },
+      { "key": "unit_price", "label": "Unit Price", "kind": "number" },
+      { "key": "taxable_amount", "label": "Taxable Amount", "kind": "number" },
+      { "key": "gst_type", "label": "GST Type" },
+      { "key": "gst_percent", "label": "GST %", "kind": "number" },
+      { "key": "gst_amount", "label": "GST Amount", "kind": "number" },
+      { "key": "total_amount", "label": "Total Amount", "kind": "number" }
+    ]
+  },
+  "export": {
+    "sheet": "Sales Orders",
+    "header_row": 1,
+    "start_row": 2,
+    "columns": [
+      { "header": "Order Number", "path": "purchase_order.po_number" },
+      { "header": "Order Date", "path": "purchase_order.po_date" },
+      { "header": "Supplier Reference", "path": "purchase_order.supplier_reference" },
+      { "header": "Buyer Company", "path": "buyer.company_name" },
+      { "header": "Buyer GST", "path": "buyer.gst_number" },
+      { "header": "Supplier Company", "path": "supplier.company_name" },
+      { "header": "Supplier GST", "path": "supplier.gst_number" },
+      { "header": "Currency", "path": "purchase_order.currency" },
+      { "header": "Payment Terms", "path": "purchase_order.payment_terms" },
+      { "header": "Subtotal", "path": "summary.subtotal" },
+      { "header": "CGST", "path": "summary.cgst" },
+      { "header": "SGST", "path": "summary.sgst" },
+      { "header": "IGST", "path": "summary.igst" },
+      { "header": "Grand Total", "path": "summary.grand_total" },
+      { "header": "Amount in Words", "path": "summary.amount_in_words" }
+    ]
+  }
+}

@@ -1,0 +1,42 @@
+Analyze the attached Export Shipping Bill (Indian Customs / ICEGATE).
+
+Convert it into the standardized customs/ERP JSON schema.
+
+The document is usually an ICEGATE "LET EXPORT COPY" / "SHIPPING BILL SUMMARY".
+Read ALL pages and treat them as ONE logical shipping bill — header details,
+invoice details, item tables, weights, and the customs LEO/examination details
+are frequently spread across several pages.
+
+Field-location guidance (use exactly the values printed on the document):
+
+- Port Code, SB No (Shipping Bill Number) and SB Date appear together in the
+  top header band (e.g. "INDEL4", "4525369", "27-JUN-26"). Capture them
+  precisely; do not confuse the Job/CB code with the SB number.
+- Customs House is the named office in the header (e.g. "NEW CUSTOM HOUSE, IGI
+  AIRPORT, NEW DELHI"). Port of Loading / Country of Final Destination / Port of
+  Final Destination appear in the numbered summary block (items 12–15).
+- Exporter is the Indian party (name, address, IEC/Br number, GSTIN). The
+  consignee/buyer is the foreign party — its name and address may be printed as
+  several "By Name" lines; combine the name into ``consignee.name`` and the
+  address lines into ``consignee.address``; set ``consignee.country`` and the
+  ``buyer`` block from the destination.
+- Invoice number, invoice value, FOB value, freight and insurance are in the
+  invoice/value block. Preserve exchange rate and currency when present.
+- Drawback (DBK): set ``drawback.drawback_claimed`` true when a DBK claim/amount
+  is shown; capture the amount and any scheme code.
+- Per-product line items: line number, product description, HS code, quantity,
+  unit (UQC), unit price, FOB value, gross weight, net weight, number of
+  packages. Extract every product row.
+
+Requirements:
+
+- Read every page; combine information across pages into one document.
+- Preserve line item / product order.
+- Preserve quantities, units, weights, prices and values exactly.
+- Preserve FOB value, freight, insurance, invoice value and exchange rate exactly.
+- Preserve HS codes, IEC number, GSTIN, port codes, container and seal numbers exactly.
+- Preserve Shipping Bill number, Shipping Bill date, LEO number and LEO date exactly.
+- Capture the shipping scheme, export promotion scheme and drawback details when present.
+- If a field is unavailable return null.
+- Never guess values.
+- Return ONLY valid JSON matching the schema below.

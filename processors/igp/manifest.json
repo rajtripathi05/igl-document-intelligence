@@ -1,0 +1,127 @@
+{
+  "manifest_version": "1.0",
+  "processor_version": "1.0",
+  "schema_version": "1.0",
+  "prompt_version": "v1",
+  "key": "igp",
+  "document_type": "IGP (Inward Gate Pass)",
+  "business_process": "IGP",
+  "status": "production",
+  "json_suffix": "igp",
+  "department": { "key": "store", "name": "Store", "icon": "📦", "order": 1 },
+  "keywords": [
+    "gate pass",
+    "inward gate pass",
+    "igp",
+    "gate entry",
+    "material inward",
+    "delivery note",
+    "vehicle no",
+    "transporter",
+    "vendor",
+    "goods receipt"
+  ],
+  "ai_description": "An Inward Gate Pass (IGP) recording materials received at the plant gate against a Purchase Order, including vendor, material, quantity, vehicle, transporter, delivery note and gate entry details.",
+  "sections": [
+    {
+      "title": "Gate Pass",
+      "fields": [
+        { "path": "gate_pass.gate_pass_number", "label": "Gate Pass No." },
+        { "path": "gate_pass.material_document_number", "label": "Material Doc No." },
+        { "path": "gate_pass.material_document_year", "label": "Mat Doc Year" },
+        { "path": "gate_pass.entry_date", "label": "Entry Date", "kind": "date" },
+        { "path": "gate_pass.gp_status", "label": "GP Status" },
+        { "path": "gate_pass.purpose", "label": "Purpose" },
+        { "path": "gate_pass.department_code", "label": "Department Code" }
+      ]
+    },
+    {
+      "title": "Purchase Order & Vendor",
+      "fields": [
+        { "path": "purchase_order.po_number", "label": "PO Number" },
+        { "path": "purchase_order.po_date", "label": "PO Date", "kind": "date" },
+        { "path": "vendor.code", "label": "Vendor Code" },
+        { "path": "vendor.name", "label": "Vendor Name" }
+      ]
+    },
+    {
+      "title": "Delivery & Transport",
+      "fields": [
+        { "path": "delivery.delivery_note", "label": "Delivery Note / Invoice" },
+        { "path": "delivery.document_date", "label": "Document Date", "kind": "date" },
+        { "path": "delivery.vehicle_number", "label": "Vehicle No." },
+        { "path": "delivery.vehicle_type", "label": "Vehicle Type" },
+        { "path": "delivery.number_of_packets", "label": "No. of Packets", "kind": "number" },
+        { "path": "delivery.nature_of_packing", "label": "Nature of Packing" },
+        { "path": "transporter.code", "label": "Transporter Code" },
+        { "path": "transporter.name", "label": "Transporter Name" },
+        { "path": "transporter.driver_name", "label": "Driver Name" },
+        { "path": "transporter.gr_number", "label": "Transport GR No." },
+        { "path": "transporter.gr_date", "label": "Transport GR Date", "kind": "date" }
+      ]
+    },
+    {
+      "title": "Value & Quality",
+      "fields": [
+        { "path": "value.net_value_doc_currency", "label": "Net Value (Doc Curr)", "kind": "number" },
+        { "path": "value.currency", "label": "Currency" },
+        { "path": "quality.despatch_grade", "label": "Despatch Grade" },
+        { "path": "quality.sugar_despatch", "label": "Sugar Despatch" },
+        { "path": "quality.brix_despatch", "label": "Brix Despatch" },
+        { "path": "quality.strength_of_sds", "label": "Strength of SDS" }
+      ]
+    }
+  ],
+  "line_items": {
+    "path": "items",
+    "columns": [
+      { "key": "line_number", "label": "Line #" },
+      { "key": "material_number", "label": "Material No." },
+      { "key": "material_description", "label": "Material Description" },
+      { "key": "unit", "label": "Unit" },
+      { "key": "quantity", "label": "Quantity", "kind": "number" }
+    ]
+  },
+  "export": {
+    "template": "templates/tsmp (1).XLSX",
+    "sheet": "Data",
+    "header_row": 3,
+    "start_row": 4,
+    "columns": [
+      { "header": "PO NO", "path": "purchase_order.po_number" },
+      { "header": "PO DATE", "path": "purchase_order.po_date" },
+      { "header": "Mat Doc No", "path": "gate_pass.material_document_number" },
+      { "header": "Gatepass No.", "path": "gate_pass.gate_pass_number" },
+      { "header": "Entry DATE", "path": "gate_pass.entry_date" },
+      { "header": "VENDOR Code", "path": "vendor.code" },
+      { "header": "VENDOR NAME", "path": "vendor.name" },
+      { "header": "MATERIAL NO.", "path": "items.material_number", "agg": "first" },
+      { "header": "MATERIAL DESC.", "path": "items.material_description", "agg": "first" },
+      { "header": "UNIT", "path": "items.unit", "agg": "first" },
+      { "header": "QUANTITY", "path": "items.quantity", "agg": "sum" },
+      { "header": "Delivery Note", "path": "delivery.delivery_note" },
+      { "header": "DOC DATE", "path": "delivery.document_date" },
+      { "header": "Vehicle No.", "path": "delivery.vehicle_number" },
+      { "header": "GP Status", "path": "gate_pass.gp_status" },
+      { "header": "Mat Doc Yr", "path": "gate_pass.material_document_year" },
+      { "header": "Vehical Type", "path": "delivery.vehicle_type" },
+      { "header": "Transporter Code", "path": "transporter.code" },
+      { "header": "Transporter NAME", "path": "transporter.name" },
+      { "header": "Name", "path": "transporter.driver_name" },
+      { "header": "No. of Packets", "path": "delivery.number_of_packets" },
+      { "header": "Nature of packing", "path": "delivery.nature_of_packing" },
+      { "header": "Transport GR No.", "path": "transporter.gr_number" },
+      { "header": "TGRDT", "path": "transporter.gr_date" },
+      { "header": "NET VAL IN DOC CURR", "path": "value.net_value_doc_currency" },
+      { "header": "PURPOSE", "path": "gate_pass.purpose" },
+      { "header": "PERSON CREATED", "path": "gate_pass.person_created" },
+      { "header": "DESP.GRADE", "path": "quality.despatch_grade" },
+      { "header": "SUGER DESP", "path": "quality.sugar_despatch" },
+      { "header": "BRIX DESP.", "path": "quality.brix_despatch" },
+      { "header": "STRENGTH OF SDS", "path": "quality.strength_of_sds" },
+      { "header": "Department Code", "path": "gate_pass.department_code" },
+      { "header": "Manual IGP", "path": "gate_pass.manual_igp" },
+      { "header": "Manual IGP Date", "path": "gate_pass.manual_igp_date" }
+    ]
+  }
+}

@@ -33,7 +33,7 @@ from processing import (
     extract_document,
 )
 from processors.bootstrap import bootstrap_processors
-from processors.registry import all_processors, processors_for_department
+from processors.registry import active_processors, production_processors_for_department
 from utils.file_handler import guess_mime_type
 from utils.helpers import configure_logging
 
@@ -99,9 +99,12 @@ def _process_uploads(department: Department, uploaded_files: list) -> None:
     # key and model on each call), so no batch-level reset is needed here.
     classifier = build_classifier()
 
-    # Department-scoped candidates first; fall back to all processors so a
-    # mis-filed document can still be detected.
-    candidates = processors_for_department(department.key) or all_processors()
+    # Department-scoped production candidates first; fall back to all production
+    # processors so a mis-filed document can still be detected. Coming-soon
+    # processors are never classification targets.
+    candidates = (
+        production_processors_for_department(department.key) or active_processors()
+    )
 
     ui.section_heading("⚡ Processing Queue")
     progress = st.progress(0.0, text="Starting…")

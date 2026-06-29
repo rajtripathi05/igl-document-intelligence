@@ -1,0 +1,17 @@
+{
+  "manifest_version": "1.0",
+  "processor_version": "0.1",
+  "schema_version": "0.0",
+  "key": "payment_voucher",
+  "document_type": "Payment Voucher",
+  "business_process": "Payment Voucher",
+  "status": "coming_soon",
+  "department": {
+    "key": "finance",
+    "name": "Finance",
+    "icon": "💰",
+    "order": 3
+  },
+  "keywords": [],
+  "ai_description": ""
+}

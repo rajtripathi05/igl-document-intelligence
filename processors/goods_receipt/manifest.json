@@ -1,0 +1,17 @@
+{
+  "manifest_version": "1.0",
+  "processor_version": "0.1",
+  "schema_version": "0.0",
+  "key": "goods_receipt",
+  "document_type": "Goods Receipt",
+  "business_process": "Goods Receipt",
+  "status": "coming_soon",
+  "department": {
+    "key": "store",
+    "name": "Store",
+    "icon": "📦",
+    "order": 1
+  },
+  "keywords": [],
+  "ai_description": ""
+}

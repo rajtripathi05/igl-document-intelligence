@@ -55,10 +55,51 @@ class BaseProcessor(ABC):
         """Validate normalized data and return a list of human-readable issues."""
         raise NotImplementedError
 
+    def auto_fix(self, data: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+        """Deterministically repair common extraction issues before validation.
+
+        Runs **no** AI. Returns the (possibly modified) data and a list of fix
+        notes, each ``{"field", "old", "new", "reason", "confidence"}``. The
+        default makes no changes; processors override via their folder
+        ``validator.py`` or rely on the generic auto-fix.
+
+        Args:
+            data: Normalized document data.
+
+        Returns:
+            A ``(data, notes)`` tuple.
+        """
+        return data, []
+
     @abstractmethod
     def build_excel_bytes(self, data: dict[str, Any]) -> bytes:
-        """Render this document type's Excel workbook to bytes."""
+        """Render this document type's per-document Excel workbook to bytes."""
         raise NotImplementedError
+
+    def build_row(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Build a single consolidated-register row from this document's data.
+
+        Returns an ordered ``{header: value}`` mapping driven by the spec's
+        :class:`~processors.spec.ExportSpec`. The default returns an empty row
+        when no export mapping is declared.
+
+        Args:
+            data: Normalized document data.
+
+        Returns:
+            An ordered dict of ``{column header: cell value}``.
+        """
+        export = self.spec.export
+        if not export:
+            return {}
+        from processors.spec import resolve_export_value
+
+        return {
+            column.header: resolve_export_value(
+                data, column, self.spec.line_items_path
+            )
+            for column in export.columns
+        }
 
     def save_excel(self, data: dict[str, Any], output_path: Path) -> Path:
         """Persist the Excel workbook to disk. Default writes the bytes.

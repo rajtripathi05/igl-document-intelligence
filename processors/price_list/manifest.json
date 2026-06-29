@@ -1,0 +1,17 @@
+{
+  "manifest_version": "1.0",
+  "processor_version": "0.1",
+  "schema_version": "0.0",
+  "key": "price_list",
+  "document_type": "Price List",
+  "business_process": "Price List",
+  "status": "coming_soon",
+  "department": {
+    "key": "marketing",
+    "name": "Marketing",
+    "icon": "📣",
+    "order": 2
+  },
+  "keywords": [],
+  "ai_description": ""
+}

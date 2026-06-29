@@ -1,157 +1,61 @@
-"""Department and document use-case registry.
+"""Department catalog for the Enterprise Document Intelligence Platform.
 
-This registry decouples the UI from the set of departments and their document
-use cases. Adding a new department or a new use case is a data change here, not
-a UI rewrite — this keeps the platform scalable across the company (see the
-Future Roadmap in CLAUDE.md).
+The catalog defines the company's departments and their navigation order/icons.
+It deliberately holds **no processor list** — business processes are discovered
+from processor manifests (``processors/<key>/manifest.json``) and grouped by
+``department.key`` at runtime via the registry. This keeps the platform scalable:
+adding a process is adding a processor folder, never editing this file.
 
-Only use cases marked ``active`` are wired to a working processor. Everything
-else renders a professional "coming soon" placeholder.
+Departments with no processors yet still appear in navigation and render an
+empty "coming soon" state.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-
-
-@dataclass(frozen=True)
-class UseCase:
-    """A document processing use case within a department.
-
-    Attributes:
-        key: Stable identifier used internally for routing.
-        name: Full human-readable name shown in the UI.
-        active: Whether a working processor exists for this use case.
-        description: Short description shown to the user.
-    """
-
-    key: str
-    name: str
-    active: bool = False
-    description: str = ""
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
 class Department:
-    """A company department and its available document use cases.
+    """A company department shown in navigation.
 
     Attributes:
-        key: Stable identifier.
-        name: Full human-readable department name.
-        icon: Emoji/icon shown beside the department name.
-        use_cases: Ordered list of use cases for this department.
+        key: Stable identifier used to group processors.
+        name: Human-readable department name.
+        icon: Emoji/icon shown beside the name.
+        order: Sort order in navigation (lower first).
     """
 
     key: str
     name: str
     icon: str = "🏢"
-    use_cases: list[UseCase] = field(default_factory=list)
-
-    @property
-    def active(self) -> bool:
-        """True if the department has at least one active use case."""
-        return any(uc.active for uc in self.use_cases)
+    order: int = 100
 
 
-# The Purchase Order processor is the single working use case in Version 1.
-# It is exposed under Procurement (primary) and Marketing (as requested).
-_PURCHASE_ORDER = UseCase(
-    key="purchase_order",
-    name="Purchase Order",
-    active=True,
-    description=(
-        "Upload a Purchase Order (PDF or image), extract standardized "
-        "ERP-ready data with Google Gemini, review it, and export JSON and Excel."
-    ),
-)
-
-
+#: The eleven India Glycols departments, in navigation order. Three have live
+#: processors today (Store→IGP, Marketing→Sales Order, Export→Shipping Bill);
+#: the rest surface their declared business processes as "coming soon".
 DEPARTMENTS: list[Department] = [
-    Department(
-        key="procurement",
-        name="Procurement",
-        icon="📦",
-        use_cases=[_PURCHASE_ORDER],
-    ),
-    Department(
-        key="marketing",
-        name="Marketing",
-        icon="📣",
-        use_cases=[_PURCHASE_ORDER],
-    ),
-    Department(
-        key="sales",
-        name="Sales",
-        icon="🤝",
-        use_cases=[
-            UseCase("sales_order", "Sales Order"),
-            UseCase("quotation", "Quotation"),
-        ],
-    ),
-    Department(
-        key="finance",
-        name="Finance / Accounts",
-        icon="💰",
-        use_cases=[
-            UseCase("gst_invoice", "GST Invoice"),
-            UseCase("credit_note", "Credit Note"),
-        ],
-    ),
-    Department(
-        key="hr",
-        name="Human Resources",
-        icon="👥",
-        use_cases=[UseCase("hr_document", "HR Document")],
-    ),
-    Department(
-        key="operations",
-        name="Operations",
-        icon="⚙️",
-        use_cases=[UseCase("delivery_challan", "Delivery Challan")],
-    ),
-    Department(
-        key="mechanical",
-        name="Mechanical",
-        icon="🔧",
-        use_cases=[UseCase("work_order", "Work Order")],
-    ),
-    Department(
-        key="chemical",
-        name="Chemical",
-        icon="🧪",
-        use_cases=[UseCase("material_safety_sheet", "Material Safety Data Sheet")],
-    ),
-    # Export is fully independent from Procurement. None of its document types
-    # share the Purchase Order schema or processor. Each will later get its own
-    # prompts, schema, validation, Excel template, SAP mapping, and processor.
-    # Shipping Bill is listed first as the reference for the next implementation.
-    Department(
-        key="export",
-        name="Export",
-        icon="🚢",
-        use_cases=[
-            UseCase(
-                "shipping_bill",
-                "Shipping Bill",
-                active=True,
-                description=(
-                    "Upload an Export Shipping Bill (PDF or image), extract "
-                    "customs-ready data with Google Gemini, review it, and "
-                    "export JSON and Excel."
-                ),
-            ),
-            UseCase("commercial_invoice", "Commercial Invoice"),
-            UseCase("packing_list", "Packing List"),
-            UseCase("bill_of_lading", "Bill of Lading"),
-            UseCase("certificate_of_origin", "Certificate of Origin"),
-            UseCase("export_invoice", "Export Invoice"),
-            UseCase("export_declaration", "Export Declaration"),
-            UseCase("customs_documents", "Customs Documents"),
-        ],
-    ),
+    Department("store", "Store", "📦", 1),
+    Department("marketing", "Marketing", "📣", 2),
+    Department("finance", "Finance", "💰", 3),
+    Department("export", "Export", "🚢", 4),
+    Department("supply_chain", "Supply Chain", "🚚", 5),
+    Department("hr", "Human Resources", "👥", 6),
+    Department("operations", "Operations", "⚙️", 7),
+    Department("mechanical", "Mechanical", "🔧", 8),
+    Department("chemical", "Chemical", "🧪", 9),
+    Department("production", "Production", "🏭", 10),
+    Department("management", "Management", "📊", 11),
 ]
 
 
 def get_department(key: str) -> Department | None:
     """Return the department with the given key, or None if not found."""
     return next((d for d in DEPARTMENTS if d.key == key), None)
+
+
+def department_name(key: str) -> str:
+    """Return a display name for a department key (falls back to the key)."""
+    dept = get_department(key)
+    return dept.name if dept else key.replace("_", " ").title()
