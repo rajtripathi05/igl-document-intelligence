@@ -5,3 +5,7 @@ pandas
 openpyxl
 Pillow
 PyMuPDF
+# Optional: enables OCR deskew + denoise in preprocess.py. The app degrades
+# gracefully to Pillow-only enhancement if this is not installed.
+opencv-python-headless
+numpy

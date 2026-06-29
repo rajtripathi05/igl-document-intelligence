@@ -24,6 +24,21 @@ from utils.json_handler import to_json_bytes
 logger = logging.getLogger(__name__)
 
 
+def _flatten_scalars(data: Any, prefix: str = "") -> dict[str, Any]:
+    """Flatten nested dicts/lists to ``{dotted_path: scalar}`` for audit diffing."""
+    flat: dict[str, Any] = {}
+    if isinstance(data, dict):
+        for key, value in data.items():
+            path = f"{prefix}.{key}" if prefix else key
+            flat.update(_flatten_scalars(value, path))
+    elif isinstance(data, list):
+        for index, value in enumerate(data):
+            flat.update(_flatten_scalars(value, f"{prefix}[{index}]"))
+    else:
+        flat[prefix] = data
+    return flat
+
+
 @dataclass
 class DocumentState:
     """All state for a single uploaded document.
@@ -57,6 +72,14 @@ class DocumentState:
     issues: list[str] = field(default_factory=list)
     status: str = "pending"
     error: str | None = None
+    # AI extraction snapshot (immutable) used to diff reviewer edits for audit.
+    extracted_original: dict[str, Any] | None = None
+    # Deterministic auto-fix notes ({field, old, new, reason, confidence}).
+    autofix_notes: list[dict[str, Any]] = field(default_factory=list)
+    # Reviewer edit audit trail ({field, ai_value, user_value, timestamp, user}).
+    audit_log: list[dict[str, Any]] = field(default_factory=list)
+    # Token usage captured at extraction time ({input/output/total_tokens}).
+    usage: dict[str, int] = field(default_factory=dict)
 
     @property
     def supported(self) -> bool:
@@ -87,6 +110,45 @@ class DocumentState:
         if not self.processor or self.data is None:
             raise ValueError("Document has no processor or data for Excel export.")
         return self.processor.build_excel_bytes(self.data)
+
+    def build_audit(self, user: str = "reviewer") -> list[dict[str, Any]]:
+        """Diff reviewer edits against the AI snapshot and refresh the audit log.
+
+        Compares the immutable ``extracted_original`` to the current ``data`` and
+        records every changed scalar field. The result is stored on
+        ``audit_log`` and returned.
+
+        Args:
+            user: Identifier of the reviewer making the edits.
+
+        Returns:
+            A list of audit entries ``{field, ai_value, user_value, timestamp,
+            user}`` (empty when nothing changed or no snapshot exists).
+        """
+        from datetime import datetime, timezone
+
+        if not self.extracted_original or self.data is None:
+            return []
+
+        original = _flatten_scalars(self.extracted_original)
+        current = _flatten_scalars(self.data)
+        timestamp = datetime.now(timezone.utc).isoformat()
+        entries: list[dict[str, Any]] = []
+        for path in sorted(set(original) | set(current)):
+            old = original.get(path)
+            new = current.get(path)
+            if old != new:
+                entries.append(
+                    {
+                        "field": path,
+                        "ai_value": old,
+                        "user_value": new,
+                        "timestamp": timestamp,
+                        "user": user,
+                    }
+                )
+        self.audit_log = entries
+        return entries
 
 
 class DocumentManager:

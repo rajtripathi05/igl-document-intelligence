@@ -33,6 +33,12 @@ _OCR_UNDERSTANDING_GUIDANCE = (
     "DOCUMENT UNDERSTANDING GUIDANCE:\n"
     "- The document may be a mobile photo, low-quality scan, rotated page, or "
     "contain stamps and mixed printed/handwritten text. Read it carefully.\n"
+    "- MULTI-PAGE: Treat every page/image provided as ONE logical document. "
+    "Combine information across all pages; a value printed on one page applies "
+    "to the whole document. Never process pages in isolation.\n"
+    "- HANDWRITING: When the same field appears both printed and handwritten and "
+    "the handwritten value is a clear correction or the actual recorded value, "
+    "PREFER the confident handwritten value over the printed one.\n"
     "- Interpret common business abbreviations and expand them to their real "
     "meaning while preserving the underlying value: Qty=Quantity, Amt=Amount, "
     "Inv=Invoice, Del=Delivery, Cons=Consignee, Exp=Export, Desc=Description, "
@@ -102,7 +108,14 @@ class GeminiClient:
         self._system_prompt = read_text_file(system_prompt_path)
         self._extraction_prompt = read_text_file(extraction_prompt_path)
         self._schema = load_schema(schema_path)
+        #: Token usage of the most recent request (populated after each call).
+        self._last_usage: dict[str, int] = {}
         logger.info("GeminiClient initialized (gateway-backed).")
+
+    @property
+    def last_usage(self) -> dict[str, int]:
+        """Token usage of the most recent extraction (for cost tracking)."""
+        return dict(self._last_usage)
 
     def _build_instruction(self, with_confidence: bool = False) -> str:
         """Combine the extraction prompt with the canonical schema.
@@ -128,28 +141,38 @@ class GeminiClient:
         return instruction
 
     def _generate(
-        self, document_bytes: bytes, mime_type: str, with_confidence: bool
+        self, parts: list[tuple[bytes, str]], with_confidence: bool
     ) -> dict[str, Any]:
         """Run an extraction call through the gateway with key + model failover.
 
-        The request is retried transparently across all configured models and
-        API keys by the gateway; the caller never re-uploads the document.
-        Retryable vs. fatal classification is centralized in the gateway.
+        Sends one or more document parts (a native PDF, or one image per page of
+        a preprocessed scan) as a single logical document. The request is retried
+        transparently across all configured models and API keys by the gateway;
+        the caller never re-uploads. Retryable vs. fatal classification is
+        centralized in the gateway. Token usage is captured for cost tracking.
+
+        Args:
+            parts: A non-empty list of ``(bytes, mime_type)`` document parts.
+            with_confidence: Whether to also request a parallel confidence map.
         """
-        document_part = types.Part.from_bytes(data=document_bytes, mime_type=mime_type)
+        document_parts = [
+            types.Part.from_bytes(data=data, mime_type=mime) for data, mime in parts
+        ]
         instruction = self._build_instruction(with_confidence)
+        self._last_usage = {}
 
         def _call(api_key: str, model: str) -> str:
             client = genai.Client(api_key=api_key)
             response = client.models.generate_content(
                 model=model,
-                contents=[instruction, document_part],
+                contents=[instruction, *document_parts],
                 config=types.GenerateContentConfig(
                     system_instruction=self._system_prompt,
                     response_mime_type="application/json",
                     temperature=0.0,
                 ),
             )
+            self._capture_usage(response)
             text = getattr(response, "text", None)
             if not text:
                 raise GeminiExtractionError("Gemini returned no text output.")
@@ -166,16 +189,42 @@ class GeminiClient:
             logger.error("Failed to parse Gemini output as JSON.")
             raise GeminiExtractionError(str(exc)) from exc
 
-    def extract(self, document_bytes: bytes, mime_type: str) -> dict[str, Any]:
+    def _capture_usage(self, response: Any) -> None:
+        """Record token usage from a response's usage metadata (best-effort)."""
+        meta = getattr(response, "usage_metadata", None)
+        if meta is None:
+            return
+        input_tokens = int(getattr(meta, "prompt_token_count", 0) or 0)
+        output_tokens = int(getattr(meta, "candidates_token_count", 0) or 0)
+        total = int(getattr(meta, "total_token_count", 0) or (input_tokens + output_tokens))
+        self._last_usage = {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total,
+        }
+
+    @staticmethod
+    def _as_parts(
+        document: bytes | list[tuple[bytes, str]],
+        mime_type: str | None,
+    ) -> list[tuple[bytes, str]]:
+        """Normalize a (bytes, mime) pair or an explicit parts list into parts."""
+        if isinstance(document, (bytes, bytearray)):
+            if not mime_type:
+                raise GeminiExtractionError("mime_type is required for raw bytes.")
+            return [(bytes(document), mime_type)]
+        return list(document)
+
+    def extract(
+        self,
+        document: bytes | list[tuple[bytes, str]],
+        mime_type: str | None = None,
+    ) -> dict[str, Any]:
         """Extract standardized document data using the configured prompts/schema.
 
-        This is the document-agnostic extraction entry point. The behaviour is
-        identical regardless of document type — the prompts and schema supplied
-        at construction time determine what is extracted.
-
-        Args:
-            document_bytes: Raw bytes of the uploaded PDF or image.
-            mime_type: MIME type of the document.
+        This is the document-agnostic extraction entry point. Accepts either raw
+        ``document`` bytes with a ``mime_type``, or an explicit list of
+        ``(bytes, mime_type)`` parts (e.g. preprocessed page images).
 
         Returns:
             The parsed extraction result as a dictionary.
@@ -183,33 +232,26 @@ class GeminiClient:
         Raises:
             GeminiExtractionError: If the API call fails or output is unusable.
         """
-        return self._generate(document_bytes, mime_type, with_confidence=False)
+        return self._generate(self._as_parts(document, mime_type), with_confidence=False)
 
     def extract_with_confidence(
-        self, document_bytes: bytes, mime_type: str
+        self,
+        document: bytes | list[tuple[bytes, str]],
+        mime_type: str | None = None,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Extract data plus an AI-reported per-field confidence map.
 
         The confidence map (under the ``_confidence`` key) is requested via an
         appended instruction and stripped from the returned data so the document
-        still matches its schema.
-
-        Args:
-            document_bytes: Raw bytes of the uploaded PDF or image.
-            mime_type: MIME type of the document.
+        still matches its schema. Accepts raw bytes + MIME type or an explicit
+        list of ``(bytes, mime_type)`` parts.
 
         Returns:
             A tuple ``(data, ai_confidence_map)``. The confidence map may be
             empty if the model omitted it; the engine falls back to heuristics.
         """
-        result = self._generate(document_bytes, mime_type, with_confidence=True)
+        result = self._generate(self._as_parts(document, mime_type), with_confidence=True)
         ai_scores = result.pop("_confidence", {}) or {}
         if not isinstance(ai_scores, dict):
             ai_scores = {}
         return result, ai_scores
-
-    def extract_purchase_order(
-        self, document_bytes: bytes, mime_type: str
-    ) -> dict[str, Any]:
-        """Backward-compatible alias for :meth:`extract` (Purchase Order)."""
-        return self.extract(document_bytes, mime_type)
