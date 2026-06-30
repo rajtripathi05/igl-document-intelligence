@@ -1,0 +1,17 @@
+{
+  "manifest_version": "1.0",
+  "processor_version": "0.1",
+  "schema_version": "0.0",
+  "key": "packing_list",
+  "document_type": "Packing List",
+  "business_process": "Packing List",
+  "status": "coming_soon",
+  "department": {
+    "key": "export",
+    "name": "Export",
+    "icon": "🚢",
+    "order": 4
+  },
+  "keywords": [],
+  "ai_description": ""
+}

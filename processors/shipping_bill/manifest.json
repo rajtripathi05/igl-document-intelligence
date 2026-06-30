@@ -1,0 +1,139 @@
+{
+  "manifest_version": "1.0",
+  "processor_version": "1.0",
+  "schema_version": "1.0",
+  "prompt_version": "v1",
+  "key": "shipping_bill",
+  "document_type": "Shipping Bill",
+  "business_process": "Shipping Bill",
+  "status": "production",
+  "accuracy": 98,
+  "json_suffix": "shipping_bill",
+  "department": { "key": "export", "name": "Export", "icon": "🚢", "order": 4 },
+  "keywords": [
+    "shipping bill",
+    "customs",
+    "port code",
+    "iec",
+    "fob",
+    "leo",
+    "exporter",
+    "consignee",
+    "drawback",
+    "let export order"
+  ],
+  "ai_description": "An Export Shipping Bill / customs document declaring goods for export, including ports, FOB value, HS codes, exporter IEC, consignee, container details, and customs LEO information.",
+  "sections": [
+    {
+      "title": "Shipping Bill",
+      "fields": [
+        { "path": "shipping_bill.shipping_bill_number", "label": "Shipping Bill Number", "required": true },
+        { "path": "shipping_bill.shipping_bill_date", "label": "Shipping Bill Date", "kind": "date" },
+        { "path": "shipping_bill.customs_house", "label": "Customs House" },
+        { "path": "shipping_bill.port_code", "label": "Port Code" },
+        { "path": "shipping_bill.port_of_loading", "label": "Port of Loading" },
+        { "path": "shipping_bill.port_of_discharge", "label": "Port of Discharge" },
+        { "path": "shipping_bill.country_of_destination", "label": "Country of Destination" },
+        { "path": "shipping_bill.shipping_scheme", "label": "Shipping Scheme" },
+        { "path": "shipping_bill.export_promotion_scheme", "label": "Export Promotion Scheme" },
+        { "path": "shipping_bill.leo_number", "label": "LEO Number" },
+        { "path": "shipping_bill.leo_date", "label": "LEO Date", "kind": "date" }
+      ]
+    },
+    {
+      "title": "Exporter",
+      "fields": [
+        { "path": "exporter.name", "label": "Exporter Name" },
+        { "path": "exporter.iec_number", "label": "IEC Number" },
+        { "path": "exporter.gstin", "label": "GSTIN" },
+        { "path": "exporter.address", "label": "Exporter Address", "kind": "long_text" }
+      ]
+    },
+    {
+      "title": "Consignee / Buyer",
+      "fields": [
+        { "path": "consignee.name", "label": "Consignee Name" },
+        { "path": "consignee.country", "label": "Consignee Country" },
+        { "path": "buyer.name", "label": "Buyer Name" },
+        { "path": "buyer.country", "label": "Buyer Country" }
+      ]
+    },
+    {
+      "title": "Invoice",
+      "fields": [
+        { "path": "invoice.invoice_number", "label": "Invoice Number" },
+        { "path": "invoice.invoice_date", "label": "Invoice Date", "kind": "date" },
+        { "path": "invoice.invoice_value", "label": "Invoice Value", "kind": "number" },
+        { "path": "invoice.fob_value", "label": "FOB Value", "kind": "number" },
+        { "path": "invoice.freight", "label": "Freight", "kind": "number" },
+        { "path": "invoice.insurance", "label": "Insurance", "kind": "number" },
+        { "path": "invoice.currency", "label": "Currency" },
+        { "path": "invoice.exchange_rate", "label": "Exchange Rate", "kind": "number" }
+      ]
+    },
+    {
+      "title": "Shipment",
+      "fields": [
+        { "path": "shipment.container_number", "label": "Container Number" },
+        { "path": "shipment.seal_number", "label": "Seal Number" },
+        { "path": "shipment.vehicle_number", "label": "Vehicle Number" },
+        { "path": "shipment.total_packages", "label": "Total Packages", "kind": "number" },
+        { "path": "shipment.total_gross_weight", "label": "Total Gross Weight", "kind": "number" },
+        { "path": "shipment.total_net_weight", "label": "Total Net Weight", "kind": "number" }
+      ]
+    },
+    {
+      "title": "Summary",
+      "fields": [
+        { "path": "summary.total_invoice_value", "label": "Total Invoice Value", "kind": "number" },
+        { "path": "summary.total_fob_value", "label": "Total FOB Value", "kind": "number" },
+        { "path": "summary.total_freight", "label": "Total Freight", "kind": "number" },
+        { "path": "summary.total_insurance", "label": "Total Insurance", "kind": "number" },
+        { "path": "summary.currency", "label": "Currency" }
+      ]
+    }
+  ],
+  "line_items": {
+    "path": "items",
+    "columns": [
+      { "key": "line_number", "label": "Line #" },
+      { "key": "product_description", "label": "Product Description" },
+      { "key": "hs_code", "label": "HS Code" },
+      { "key": "quantity", "label": "Quantity", "kind": "number" },
+      { "key": "unit", "label": "Unit (UQC)" },
+      { "key": "unit_price", "label": "Unit Price", "kind": "number" },
+      { "key": "fob_value", "label": "FOB Value", "kind": "number" },
+      { "key": "gross_weight", "label": "Gross Weight", "kind": "number" },
+      { "key": "net_weight", "label": "Net Weight", "kind": "number" },
+      { "key": "number_of_packages", "label": "Packages", "kind": "number" }
+    ]
+  },
+  "export": {
+    "template": "templates/Book8.xlsx",
+    "sheet": "Sheet1",
+    "header_row": 1,
+    "start_row": 2,
+    "columns": [
+      { "header": "Inv. No.", "path": "invoice.invoice_number" },
+      { "header": "Inv. Dt.", "path": "invoice.invoice_date" },
+      { "header": "By Name1", "path": "consignee.name" },
+      { "header": "By Name2", "path": "consignee.address" },
+      { "header": "By Name3", "path": "buyer.name" },
+      { "header": "By Name4", "path": "buyer.country" },
+      { "header": "Port of Discharge", "path": "shipping_bill.port_of_discharge" },
+      { "header": "Country of Discharge", "path": "shipping_bill.country_of_destination" },
+      { "header": "Qty", "path": "items.quantity", "agg": "sum" },
+      { "header": "UOM", "path": "items.unit", "agg": "first" },
+      { "header": "Rate", "path": "items.unit_price", "agg": "first" },
+      { "header": "FOC Value", "path": "invoice.invoice_value" },
+      { "header": "FOB -Freight", "path": "invoice.fob_value" },
+      { "header": "Freight", "path": "invoice.freight" },
+      { "header": "Insurance", "path": "invoice.insurance" },
+      { "header": "Commission", "path": "invoice.commission" },
+      { "header": "Port Code", "path": "shipping_bill.port_code" },
+      { "header": "SB No.", "path": "shipping_bill.shipping_bill_number" },
+      { "header": "SB.Date", "path": "shipping_bill.shipping_bill_date" },
+      { "header": "DBK Claim", "path": "drawback.drawback_amount" }
+    ]
+  }
+}

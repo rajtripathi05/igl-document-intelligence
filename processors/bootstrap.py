@@ -1,30 +1,36 @@
-"""Processor bootstrap: register all available document processors.
+"""Processor bootstrap.
 
-This is the single place where concrete processors are wired into the registry.
-Importing this module activates every implemented document type.
+In V2.0 there is **no hardcoded processor list**. Every document type is a
+self-contained folder under ``processors/<key>/`` with a ``manifest.json`` and
+is activated by filesystem discovery (see :mod:`processors.discovery`).
 
-When the Shipping Bill processor is implemented, enabling it requires ONLY:
-
-    from processors.shipping_bill import ShippingBillProcessor
-    register_processor(ShippingBillProcessor())
-
-No existing processor or routing code needs to change.
+Adding a new processor requires only creating a new folder — no edits here, in
+the registry, or in any routing code.
 """
 
 from __future__ import annotations
 
-from processors.purchase_order import PurchaseOrderProcessor
-from processors.registry import register_processor
-from processors.shipping_bill import ShippingBillProcessor
+from processors.discovery import discover_and_register
 
 _BOOTSTRAPPED = False
 
 
 def bootstrap_processors() -> None:
-    """Register all implemented processors exactly once."""
+    """Discover and register every folder processor exactly once."""
     global _BOOTSTRAPPED
     if _BOOTSTRAPPED:
         return
-    register_processor(PurchaseOrderProcessor())
-    register_processor(ShippingBillProcessor())
+    discover_and_register()
     _BOOTSTRAPPED = True
+
+
+def refresh_processors() -> int:
+    """Force a fresh discovery pass (used after admin creates/promotes a processor).
+
+    Returns:
+        The number of processors registered.
+    """
+    global _BOOTSTRAPPED
+    count = discover_and_register(force=True)
+    _BOOTSTRAPPED = True
+    return count

@@ -1,0 +1,43 @@
+Analyze the attached Inward Gate Pass (IGP) document set.
+
+Convert it into the standardized SAP-ready JSON schema.
+
+Read ALL pages and treat the bundle (gate pass + supplier invoice + transport
+copy / LR / GR + e-way bill + handwritten gate notes) as ONE logical inward
+gate pass. A field printed on one page applies to the whole document.
+
+Field guidance (return exactly what is printed; null when absent):
+
+- Gate Pass: gate pass number, material document number and year, entry date and
+  time, GP status, purpose, department code, person who created the entry, and
+  any manual IGP number/date. These are often SAP-stamped or handwritten at the
+  gate — extract only if present, else null.
+- Purchase Order: PO number and PO date the goods are received against.
+- Vendor: vendor code and vendor name (the supplier dispatching the goods).
+- Material line items: for each material, the material number/code, material
+  description, unit (UOM, e.g. BL, MT, NOS, LOT) and quantity. Extract every
+  material row; most gate passes have a single material but some have several.
+- Delivery: delivery note / supplier invoice number, document date, vehicle
+  number, vehicle type (TANKER / TRUCK / RAIL / OTHERS), number of packets and
+  nature of packing.
+- Transporter: transporter code, transporter name, driver name, transport GR
+  (goods receipt) number and GR date.
+- Excise / Transport Permits (common on spirit & ethanol consignments, often
+  handwritten or rubber-stamped): the MF4 (spirit movement permit) number and
+  its date, and the Form 31 (transit declaration) number. Extract only what is
+  actually printed or handwritten on the document; return null when absent.
+- Value: net value in document currency, and the currency.
+- Quality (for spirits/ethanol consignments, often handwritten): despatch grade,
+  sugar despatch, brix despatch, and strength of SDS.
+
+Rules:
+
+- Combine information across all pages into one document.
+- Preserve PO numbers, gate pass / material document numbers, vehicle numbers,
+  vendor codes, material codes, quantities and dates exactly.
+- Prefer confident handwritten values when they override printed values.
+- Vehicle numbers, driver names, quantities and quality readings are frequently
+  handwritten — read them carefully.
+- If a field is unavailable return null (never an empty string).
+- Never guess values.
+- Return ONLY valid JSON matching the schema below.

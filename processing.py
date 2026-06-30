@@ -1,15 +1,26 @@
 """Per-document processing orchestration.
 
-Ties together classification, extraction, confidence scoring, normalization, and
-validation for a single uploaded document — independent of document type. This
-is the only place Gemini is called; once a ``DocumentState`` carries ``data``,
-all editing and re-export happen without further AI calls.
+Ties together preprocessing, classification (auto mode) or direct assignment
+(manual mode), AI extraction, the extraction cache, deterministic auto-fix,
+schema normalization, confidence scoring, and validation for a single uploaded
+document — independent of document type. This is the only place Gemini is
+called; once a ``DocumentState`` carries ``data`` all editing and re-export
+happen without further AI calls.
+
+``process_batch`` decouples the per-document loop from the UI (it takes a plain
+progress callback and never touches Streamlit), so it can later be driven by a
+background worker/queue without changes here.
 """
 
 from __future__ import annotations
 
+import copy
 import logging
+from typing import Callable
 
+import cache
+import cost
+import preprocess
 from ai_gateway import AIServiceUnavailable
 from classifier import DocumentClassifier
 from config import ai_gateway
@@ -22,6 +33,9 @@ from utils.validators import normalize_to_schema
 
 logger = logging.getLogger(__name__)
 
+#: progress_cb(done: float, total: int, doc: DocumentState, phase: str) -> None
+ProgressCallback = Callable[[float, int, DocumentState, str], None]
+
 
 def classify_document(
     doc: DocumentState,
@@ -33,7 +47,7 @@ def classify_document(
     Args:
         doc: The document to classify (updated in place).
         classifier: The shared document classifier.
-        candidates: Candidate processors (e.g. department-scoped).
+        candidates: Candidate processors (department-scoped, production only).
     """
     result = classifier.classify(doc.file_bytes, doc.mime_type, candidates)
     doc.processor = result.processor
@@ -45,30 +59,87 @@ def classify_document(
         doc.error = "Unsupported document type."
 
 
-def extract_document(doc: DocumentState) -> None:
-    """Run extraction + confidence + normalization + validation in place.
+def assign_processor(doc: DocumentState, processor: BaseProcessor) -> None:
+    """Assign a processor directly (Manual mode — no classification needed)."""
+    doc.processor = processor
+    doc.document_type = processor.spec.document_type
+    doc.classification_confidence = 100
+    doc.classification_method = "manual"
+
+
+def extract_document(
+    doc: DocumentState,
+    on_stage: Callable[[str], None] | None = None,
+) -> None:
+    """Run extraction + auto-fix + normalization + confidence + validation.
+
+    Uses the extraction cache (keyed by content + processor + prompt version) to
+    skip Gemini on repeat uploads, applies OCR preprocessing before the model,
+    and records token usage for cost tracking.
 
     Args:
-        doc: A classified, supported document (updated in place).
+        doc: A classified/assigned, supported document (updated in place).
+        on_stage: Optional callback invoked with each pipeline stage name
+            (``"ocr"``, ``"ai"``, ``"extraction"``, ``"validation"``,
+            ``"confidence"``) as it begins, so the UI can illuminate a live
+            processing pipeline. UI-agnostic and entirely optional.
     """
     if doc.processor is None:
         doc.status = "unsupported"
         doc.error = "Unsupported document type."
         return
 
-    try:
-        client = doc.processor.build_client()
-        raw, ai_scores = client.extract_with_confidence(doc.file_bytes, doc.mime_type)
+    def _stage(name: str) -> None:
+        if on_stage is not None:
+            on_stage(name)
 
-        schema = load_schema(doc.processor.schema_path())
+    processor = doc.processor
+    spec = processor.spec
+    try:
+        _stage("ocr")
+        cache_key = cache.make_key(doc.file_bytes, spec.use_case_key, spec.prompt_version)
+        cached = cache.load(cache_key)
+        if cached is not None:
+            raw, ai_scores = cached.get("data", {}), cached.get("ai_scores", {})
+            _stage("ai")
+        else:
+            parts = [
+                (part.data, part.mime_type)
+                for part in preprocess.prepare(doc.file_bytes, doc.mime_type)
+            ]
+            _stage("ai")
+            client = processor.build_client()
+            raw, ai_scores = client.extract_with_confidence(parts)
+            doc.usage = client.last_usage
+            cost.record(
+                spec.use_case_key,
+                spec.department_key,
+                str(ai_gateway.status().get("model", "")),
+                doc.usage,
+            )
+            cache.store(cache_key, raw, ai_scores)
+
+        _stage("extraction")
+        schema = load_schema(processor.schema_path())
         normalized = normalize_to_schema(raw, schema)
         normalized.setdefault("metadata", {}).setdefault("source", {})[
             "filename"
         ] = doc.filename
 
+        # Validation -> Auto-Fix -> (review) -> Export: deterministic repairs run
+        # before validation; the data the reviewer sees becomes the audit baseline.
+        normalized, notes = processor.auto_fix(normalized)
+        doc.autofix_notes = notes
+
         doc.data = normalized
+        doc.extracted_original = copy.deepcopy(normalized)
+
+        _stage("validation")
+        doc.issues = processor.validate(normalized)
+
+        _stage("confidence")
         doc.confidence = compute_confidence(normalized, ai_scores)
-        doc.issues = doc.processor.validate(normalized)
+
         doc.status = "done"
         logger.info("Extracted '%s' as %s.", doc.filename, doc.document_type)
     except AIServiceUnavailable as exc:
@@ -84,6 +155,54 @@ def extract_document(doc: DocumentState) -> None:
         logger.exception("Extraction failed for %s.", doc.filename)
         doc.status = "error"
         doc.error = str(exc)
+
+
+def process_batch(
+    docs: list[DocumentState],
+    *,
+    processor: BaseProcessor | None = None,
+    classifier: DocumentClassifier | None = None,
+    candidates: list[BaseProcessor] | None = None,
+    progress_cb: ProgressCallback | None = None,
+) -> None:
+    """Process a batch of documents (each independently), reporting progress.
+
+    Exactly one routing strategy is used:
+    - **Manual mode**: pass ``processor`` to assign it to every document.
+    - **Auto Detect**: pass ``classifier`` + ``candidates`` to classify each.
+
+    Args:
+        docs: Documents to process (mutated in place).
+        processor: Fixed processor for manual mode.
+        classifier: Classifier for auto mode.
+        candidates: Candidate processors for auto mode.
+        progress_cb: Optional progress callback (no Streamlit dependency).
+    """
+    total = len(docs)
+    for index, doc in enumerate(docs):
+        if progress_cb:
+            progress_cb(index, total, doc, "classifying")
+        if processor is not None:
+            assign_processor(doc, processor)
+        elif classifier is not None and candidates:
+            classify_document(doc, classifier, candidates)
+        else:
+            doc.status = "unsupported"
+            doc.error = "No processor selected."
+
+        if doc.supported:
+            if progress_cb:
+                # Forward each fine-grained extraction stage to the UI so the
+                # live pipeline can illuminate (OCR -> AI -> ... -> Confidence).
+                def _on_stage(name: str, _i: int = index, _doc: DocumentState = doc) -> None:
+                    progress_cb(_i + 0.5, total, _doc, name)
+
+                extract_document(doc, on_stage=_on_stage)
+            else:
+                extract_document(doc)
+
+        if progress_cb:
+            progress_cb(index + 1, total, doc, "done")
 
 
 def build_classifier() -> DocumentClassifier:

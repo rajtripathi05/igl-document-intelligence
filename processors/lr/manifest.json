@@ -1,0 +1,17 @@
+{
+  "manifest_version": "1.0",
+  "processor_version": "0.1",
+  "schema_version": "0.0",
+  "key": "lr",
+  "document_type": "Lorry Receipt (LR)",
+  "business_process": "LR",
+  "status": "coming_soon",
+  "department": {
+    "key": "supply_chain",
+    "name": "Supply Chain",
+    "icon": "🚚",
+    "order": 5
+  },
+  "keywords": [],
+  "ai_description": ""
+}

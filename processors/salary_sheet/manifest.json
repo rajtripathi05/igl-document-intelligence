@@ -1,0 +1,17 @@
+{
+  "manifest_version": "1.0",
+  "processor_version": "0.1",
+  "schema_version": "0.0",
+  "key": "salary_sheet",
+  "document_type": "Salary Sheet",
+  "business_process": "Salary Sheet",
+  "status": "coming_soon",
+  "department": {
+    "key": "hr",
+    "name": "Human Resources",
+    "icon": "👥",
+    "order": 6
+  },
+  "keywords": [],
+  "ai_description": ""
+}

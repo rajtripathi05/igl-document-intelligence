@@ -48,9 +48,20 @@ def get_processor(use_case_key: str) -> BaseProcessor | None:
     return _REGISTRY.get(use_case_key)
 
 
+def clear_registry() -> None:
+    """Remove all registered processors (used before a fresh discovery pass)."""
+    _REGISTRY.clear()
+    logger.info("Processor registry cleared.")
+
+
 def all_processors() -> list[BaseProcessor]:
     """Return every registered processor (registration order preserved)."""
     return list(_REGISTRY.values())
+
+
+def active_processors() -> list[BaseProcessor]:
+    """Return only production (business-visible) processors."""
+    return [p for p in _REGISTRY.values() if p.spec.active]
 
 
 def processors_for_department(department_key: str) -> list[BaseProcessor]:
@@ -65,3 +76,23 @@ def processors_for_department(department_key: str) -> list[BaseProcessor]:
     return [
         p for p in _REGISTRY.values() if p.spec.department_key == department_key
     ]
+
+
+def production_processors_for_department(department_key: str) -> list[BaseProcessor]:
+    """Return production processors in a department (classification candidates)."""
+    return [
+        p
+        for p in _REGISTRY.values()
+        if p.spec.department_key == department_key and p.spec.active
+    ]
+
+
+def business_processes_for_department(department_key: str) -> list[BaseProcessor]:
+    """Return all processors (any status) for a department, navigation-ordered.
+
+    Used to render the Business Process picker, which lists production processes
+    alongside "coming soon" placeholders.
+    """
+    procs = [p for p in _REGISTRY.values() if p.spec.department_key == department_key]
+    procs.sort(key=lambda p: p.spec.business_process.lower())
+    return procs

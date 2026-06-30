@@ -1,0 +1,76 @@
+{
+  "metadata": {
+    "document_type": "IGP",
+    "department": "Store",
+    "document_subtype": "Inward Gate Pass",
+    "source": {
+      "filename": null,
+      "file_type": "pdf"
+    }
+  },
+  "gate_pass": {
+    "gate_pass_number": null,
+    "material_document_number": null,
+    "material_document_year": null,
+    "entry_date": null,
+    "entry_time": null,
+    "gp_status": null,
+    "purpose": null,
+    "department_code": null,
+    "person_created": null,
+    "manual_igp": null,
+    "manual_igp_date": null
+  },
+  "purchase_order": {
+    "po_number": null,
+    "po_date": null
+  },
+  "vendor": {
+    "code": null,
+    "name": null
+  },
+  "delivery": {
+    "delivery_note": null,
+    "document_date": null,
+    "vehicle_number": null,
+    "vehicle_type": null,
+    "number_of_packets": null,
+    "nature_of_packing": null
+  },
+  "transporter": {
+    "code": null,
+    "name": null,
+    "driver_name": null,
+    "gr_number": null,
+    "gr_date": null
+  },
+  "permits": {
+    "mf4_number": null,
+    "mf4_date": null,
+    "form_31": null
+  },
+  "value": {
+    "net_value_doc_currency": null,
+    "currency": null
+  },
+  "quality": {
+    "despatch_grade": null,
+    "sugar_despatch": null,
+    "brix_despatch": null,
+    "strength_of_sds": null
+  },
+  "items": [
+    {
+      "line_number": null,
+      "material_number": null,
+      "material_description": null,
+      "unit": null,
+      "quantity": null
+    }
+  ],
+  "remarks": [],
+  "additional_information": {},
+  "missing_fields": [],
+  "warnings": [],
+  "errors": []
+}
