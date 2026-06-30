@@ -4,7 +4,7 @@ Business users receive a flat register per document type: ONE workbook, ONE
 worksheet, and **one row per uploaded PDF**, built from each processor's
 declarative export mapping (``ProcessorSpec.export``). When the processor
 declares a styled template (the uploaded business workbook, e.g. ``Book8.xlsx``
-or ``tsmp (1).XLSX``), the template's header styling, fonts, borders, column
+or ``tsmp (2).XLSX``), the template's header styling, fonts, borders, column
 widths and merged cells are preserved and data rows are written beneath the
 header — matching columns by **header name** so the mapping is robust to column
 position. A batch spanning multiple document types yields one workbook per type,

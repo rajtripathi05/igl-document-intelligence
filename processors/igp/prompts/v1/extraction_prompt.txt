@@ -22,6 +22,10 @@ Field guidance (return exactly what is printed; null when absent):
   nature of packing.
 - Transporter: transporter code, transporter name, driver name, transport GR
   (goods receipt) number and GR date.
+- Excise / Transport Permits (common on spirit & ethanol consignments, often
+  handwritten or rubber-stamped): the MF4 (spirit movement permit) number and
+  its date, and the Form 31 (transit declaration) number. Extract only what is
+  actually printed or handwritten on the document; return null when absent.
 - Value: net value in document currency, and the currency.
 - Quality (for spirits/ethanol consignments, often handwritten): despatch grade,
   sugar despatch, brix despatch, and strength of SDS.

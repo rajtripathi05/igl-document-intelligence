@@ -44,6 +44,11 @@
     "gr_number": null,
     "gr_date": null
   },
+  "permits": {
+    "mf4_number": null,
+    "mf4_date": null,
+    "form_31": null
+  },
   "value": {
     "net_value_doc_currency": null,
     "currency": null

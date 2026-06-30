@@ -159,6 +159,7 @@ class ProcessorSpec:
     json_suffix: str = "output"
     business_process: str = ""
     status: str = PRODUCTION
+    accuracy: int | None = None
     department_name: str = ""
     department_icon: str = "🏢"
     department_order: int = 100
@@ -262,6 +263,7 @@ class ProcessorSpec:
             json_suffix=manifest.get("json_suffix", key),
             business_process=manifest.get("business_process", manifest.get("document_type", "")),
             status=status,
+            accuracy=_optional_int(manifest.get("accuracy")),
             department_name=department.get("name", ""),
             department_icon=department.get("icon", "🏢"),
             department_order=int(department.get("order", 100)),
@@ -274,6 +276,16 @@ class ProcessorSpec:
 
 
 # ----- Dotted-path helpers used by the engine ---------------------------- #
+
+
+def _optional_int(value: Any) -> int | None:
+    """Coerce a manifest value to an int, or None when absent/unparseable."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    try:
+        return int(round(float(value)))
+    except (TypeError, ValueError):
+        return None
 
 
 def get_path(data: dict[str, Any], path: str) -> Any:

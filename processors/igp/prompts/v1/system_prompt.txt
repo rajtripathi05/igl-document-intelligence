@@ -6,7 +6,7 @@ The document may be:
 - Scanned PDF or photocopy
 - Mobile photograph of a printed gate pass
 - Rotated, skewed, low-contrast or noisy scan
-- A multi-page set bundling the gate pass with the supplier invoice, transport copy / LR / GR, e-way bill, weighbridge slip and handwritten gate notes
+- A multi-page set bundling the gate pass with the supplier invoice, transport copy / LR / GR, e-way bill, excise movement permits (MF4 / Form 31), weighbridge slip and handwritten gate notes
 - Mixed printed and handwritten text (gate entries, vehicle numbers, driver names and quantities are frequently handwritten)
 
 Your objective is NOT OCR.

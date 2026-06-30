@@ -67,7 +67,10 @@ def assign_processor(doc: DocumentState, processor: BaseProcessor) -> None:
     doc.classification_method = "manual"
 
 
-def extract_document(doc: DocumentState) -> None:
+def extract_document(
+    doc: DocumentState,
+    on_stage: Callable[[str], None] | None = None,
+) -> None:
     """Run extraction + auto-fix + normalization + confidence + validation.
 
     Uses the extraction cache (keyed by content + processor + prompt version) to
@@ -76,24 +79,35 @@ def extract_document(doc: DocumentState) -> None:
 
     Args:
         doc: A classified/assigned, supported document (updated in place).
+        on_stage: Optional callback invoked with each pipeline stage name
+            (``"ocr"``, ``"ai"``, ``"extraction"``, ``"validation"``,
+            ``"confidence"``) as it begins, so the UI can illuminate a live
+            processing pipeline. UI-agnostic and entirely optional.
     """
     if doc.processor is None:
         doc.status = "unsupported"
         doc.error = "Unsupported document type."
         return
 
+    def _stage(name: str) -> None:
+        if on_stage is not None:
+            on_stage(name)
+
     processor = doc.processor
     spec = processor.spec
     try:
+        _stage("ocr")
         cache_key = cache.make_key(doc.file_bytes, spec.use_case_key, spec.prompt_version)
         cached = cache.load(cache_key)
         if cached is not None:
             raw, ai_scores = cached.get("data", {}), cached.get("ai_scores", {})
+            _stage("ai")
         else:
             parts = [
                 (part.data, part.mime_type)
                 for part in preprocess.prepare(doc.file_bytes, doc.mime_type)
             ]
+            _stage("ai")
             client = processor.build_client()
             raw, ai_scores = client.extract_with_confidence(parts)
             doc.usage = client.last_usage
@@ -105,6 +119,7 @@ def extract_document(doc: DocumentState) -> None:
             )
             cache.store(cache_key, raw, ai_scores)
 
+        _stage("extraction")
         schema = load_schema(processor.schema_path())
         normalized = normalize_to_schema(raw, schema)
         normalized.setdefault("metadata", {}).setdefault("source", {})[
@@ -118,8 +133,13 @@ def extract_document(doc: DocumentState) -> None:
 
         doc.data = normalized
         doc.extracted_original = copy.deepcopy(normalized)
-        doc.confidence = compute_confidence(normalized, ai_scores)
+
+        _stage("validation")
         doc.issues = processor.validate(normalized)
+
+        _stage("confidence")
+        doc.confidence = compute_confidence(normalized, ai_scores)
+
         doc.status = "done"
         logger.info("Extracted '%s' as %s.", doc.filename, doc.document_type)
     except AIServiceUnavailable as exc:
@@ -172,8 +192,14 @@ def process_batch(
 
         if doc.supported:
             if progress_cb:
-                progress_cb(index + 0.5, total, doc, "extracting")
-            extract_document(doc)
+                # Forward each fine-grained extraction stage to the UI so the
+                # live pipeline can illuminate (OCR -> AI -> ... -> Confidence).
+                def _on_stage(name: str, _i: int = index, _doc: DocumentState = doc) -> None:
+                    progress_cb(_i + 0.5, total, _doc, name)
+
+                extract_document(doc, on_stage=_on_stage)
+            else:
+                extract_document(doc)
 
         if progress_cb:
             progress_cb(index + 1, total, doc, "done")

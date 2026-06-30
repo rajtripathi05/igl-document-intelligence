@@ -1,12 +1,13 @@
 {
   "manifest_version": "1.0",
-  "processor_version": "1.0",
-  "schema_version": "1.0",
+  "processor_version": "1.1",
+  "schema_version": "1.1",
   "prompt_version": "v1",
   "key": "igp",
   "document_type": "IGP (Inward Gate Pass)",
   "business_process": "IGP",
   "status": "production",
+  "accuracy": 97,
   "json_suffix": "igp",
   "department": { "key": "store", "name": "Store", "icon": "📦", "order": 1 },
   "keywords": [
@@ -61,6 +62,14 @@
       ]
     },
     {
+      "title": "Excise & Transport Permits",
+      "fields": [
+        { "path": "permits.mf4_number", "label": "MF4 No." },
+        { "path": "permits.mf4_date", "label": "MF4 Date", "kind": "date" },
+        { "path": "permits.form_31", "label": "Form 31" }
+      ]
+    },
+    {
       "title": "Value & Quality",
       "fields": [
         { "path": "value.net_value_doc_currency", "label": "Net Value (Doc Curr)", "kind": "number" },
@@ -83,7 +92,7 @@
     ]
   },
   "export": {
-    "template": "templates/tsmp (1).XLSX",
+    "template": "templates/tsmp (2).XLSX",
     "sheet": "Data",
     "header_row": 3,
     "start_row": 4,
@@ -93,6 +102,7 @@
       { "header": "Mat Doc No", "path": "gate_pass.material_document_number" },
       { "header": "Gatepass No.", "path": "gate_pass.gate_pass_number" },
       { "header": "Entry DATE", "path": "gate_pass.entry_date" },
+      { "header": "Entry time", "path": "gate_pass.entry_time" },
       { "header": "VENDOR Code", "path": "vendor.code" },
       { "header": "VENDOR NAME", "path": "vendor.name" },
       { "header": "MATERIAL NO.", "path": "items.material_number", "agg": "first" },
@@ -110,8 +120,11 @@
       { "header": "Name", "path": "transporter.driver_name" },
       { "header": "No. of Packets", "path": "delivery.number_of_packets" },
       { "header": "Nature of packing", "path": "delivery.nature_of_packing" },
+      { "header": "MF4 No.", "path": "permits.mf4_number" },
+      { "header": "mfdat", "path": "permits.mf4_date" },
       { "header": "Transport GR No.", "path": "transporter.gr_number" },
       { "header": "TGRDT", "path": "transporter.gr_date" },
+      { "header": "Form 31", "path": "permits.form_31" },
       { "header": "NET VAL IN DOC CURR", "path": "value.net_value_doc_currency" },
       { "header": "PURPOSE", "path": "gate_pass.purpose" },
       { "header": "PERSON CREATED", "path": "gate_pass.person_created" },

@@ -38,6 +38,7 @@ from processors.base import BaseProcessor
 from processors.bootstrap import bootstrap_processors
 from processors.registry import (
     active_processors,
+    all_processors,
     business_processes_for_department,
     production_processors_for_department,
 )
@@ -75,8 +76,56 @@ def _manager() -> DocumentManager:
 # ----- Sidebar / navigation --------------------------------------------- #
 
 
+@st.dialog("🔒 Developer Mode")
+def _dev_password_dialog() -> None:
+    """Modal password prompt that unlocks Developer Mode for the session.
+
+    Developer Mode is never accessible without entering the correct admin
+    password (resolved by ``config.verify_admin_password`` from the environment /
+    Streamlit secrets, defaulting to the built-in value). The password itself is
+    never displayed anywhere in the UI.
+    """
+    st.write(
+        "Developer Mode is restricted to administrators. "
+        "Enter the admin password to continue."
+    )
+    password = st.text_input("Admin password", type="password", key="dev_pw_input")
+    if st.button("Unlock", type="primary", use_container_width=True):
+        if config.verify_admin_password(password):
+            st.session_state["dev_unlocked"] = True
+            st.session_state["dev_mode"] = True
+            st.session_state.pop("dev_pw_input", None)
+            st.rerun()
+        else:
+            st.error("Incorrect Admin Password")
+
+
+def _render_dev_gate() -> bool:
+    """Render the password-gated Developer Mode control; return whether unlocked.
+
+    Business users see only a locked "Developer Mode" button. Clicking it opens
+    the password modal. Once unlocked, Developer Mode stays unlocked for the
+    current Streamlit session until the user explicitly locks it again.
+    """
+    unlocked = bool(st.session_state.get("dev_unlocked", False))
+    if unlocked:
+        st.session_state["dev_mode"] = True
+        st.markdown("🔓 **Developer Mode** · unlocked")
+        if st.button("Lock Developer Mode", use_container_width=True):
+            st.session_state["dev_unlocked"] = False
+            st.session_state["dev_mode"] = False
+            st.rerun()
+        return True
+
+    st.session_state["dev_mode"] = False
+    st.caption("👤 Business mode")
+    if st.button("🔒 Developer Mode", use_container_width=True):
+        _dev_password_dialog()
+    return False
+
+
 def _render_sidebar() -> Nav:
-    """Render the sidebar: mode, department, developer toggle, and section nav."""
+    """Render the sidebar: mode, department, developer gate, and section nav."""
     with st.sidebar:
         ui.render_sidebar_brand(settings.assets_dir)
         st.divider()
@@ -98,13 +147,7 @@ def _render_sidebar() -> Nav:
         department = DEPARTMENTS[dept_index]
 
         st.divider()
-        dev_mode = st.toggle(
-            "Developer mode",
-            value=bool(st.session_state.get("dev_mode", settings.dev_mode)),
-            help="Shows raw JSON, the audit trail, cost/health dashboards and the "
-            "admin panel. Business users keep this off.",
-        )
-        st.session_state["dev_mode"] = dev_mode
+        dev_mode = _render_dev_gate()
 
         view = "process"
         if dev_mode:
@@ -130,7 +173,10 @@ def _render_sidebar() -> Nav:
 
         if dev_mode and config.ai_gateway.has_capacity():
             st.divider()
-            ui.render_gateway_status(config.ai_gateway.status())
+            pending = sum(1 for d in manager.documents if d.status == "pending")
+            ui.render_gateway_status(
+                config.ai_gateway.status(), queue=pending, stage="Idle"
+            )
 
     return Nav(mode=mode, department=department, view=view, dev_mode=dev_mode)
 
@@ -180,19 +226,20 @@ def _run_processing(
         return
 
     manager = _manager()
-    ui.section_heading("⚡ Processing Queue")
-    progress = st.progress(0.0, text="Starting…")
-    total = len(docs)
+    ui.section_heading("⚡ AI Processing Pipeline")
+    gateway_status = (
+        config.ai_gateway.status() if config.ai_gateway.has_capacity() else {}
+    )
+    theater = ui.ProcessingTheater(total=len(docs), gateway=gateway_status)
     timings: dict[str, float] = st.session_state.setdefault("doc_times", {})
     started_at: dict[str, float] = {}
 
     def _progress(done: float, count: int, doc: DocumentState, phase: str) -> None:
         if phase == "classifying":
             started_at[doc.doc_id] = time.perf_counter()
-        if phase == "done" and doc.doc_id in started_at:
+        elif phase == "done" and doc.doc_id in started_at:
             timings[doc.doc_id] = time.perf_counter() - started_at[doc.doc_id]
-        label = {"classifying": "Detecting", "extracting": "Extracting", "done": "Processed"}.get(phase, phase)
-        progress.progress(min(done / total, 1.0), text=f"{label} {doc.filename}…")
+        theater.update(done, count, doc, phase)
 
     classifier = None
     candidates = None
@@ -207,7 +254,7 @@ def _run_processing(
         candidates=candidates,
         progress_cb=_progress,
     )
-    progress.empty()
+    theater.finish()
 
     for doc in docs:
         manager.add(doc)
@@ -230,6 +277,13 @@ def _can_process(spec, dev_mode: bool) -> bool:
 
 def _render_process_view(nav: Nav) -> None:
     """Render the document processing workspace for the selected mode."""
+    # The Management department surfaces the executive dashboard rather than an
+    # upload workspace (it owns no document processors of its own).
+    if nav.department.key == "management":
+        ui.render_breadcrumb(nav.department.name, "Executive Dashboard")
+        _render_management_dashboard(nav)
+        return
+
     if nav.mode == _MODE_MANUAL:
         ui.render_breadcrumb(nav.department.name, "Manual · select business process")
         _render_manual_mode(nav)
@@ -241,8 +295,100 @@ def _render_process_view(nav: Nav) -> None:
     _render_documents()
 
 
+def _render_management_dashboard(nav: Nav) -> None:
+    """Render the executive (management) dashboard.
+
+    A business-facing operational overview: department + processor statistics,
+    today's documents, average confidence, average processing time, estimated
+    cost, gateway health, and the all-time success rate — visualized as glass
+    KPI cards with confidence rings, a live AI Gateway card, department summary
+    cards, and the informational processor marketplace. Read-only; it never
+    exposes JSON or any sensitive value.
+    """
+    from datetime import datetime, timezone
+
+    from utils.confidence import band, overall_confidence
+
+    ui.section_heading("📊 Executive Dashboard")
+    st.caption(
+        "Live operational overview across the India Glycols Enterprise "
+        "Document Intelligence Platform."
+    )
+
+    procs = all_processors()
+    installed = active_processors()
+    coming = [p for p in procs if p.spec.status == COMING_SOON]
+    live_dept_keys = {p.spec.department_key for p in installed}
+
+    totals = cost.summary()["totals"]
+
+    batches = history.list_batches()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today_docs = sum(
+        int(b.get("total", 0))
+        for b in batches
+        if str(b.get("timestamp", "")).startswith(today)
+    )
+    hist_total = sum(int(b.get("total", 0)) for b in batches)
+    hist_success = sum(int(b.get("success", 0)) for b in batches)
+    success_rate = round(hist_success / hist_total * 100) if hist_total else 100
+
+    manager = _manager()
+    done = [d for d in manager.documents if d.status == "done" and d.confidence]
+    confidences = [overall_confidence(d.confidence) for d in done]
+    avg_conf = round(sum(confidences) / len(confidences)) if confidences else 0
+    times = list(st.session_state.get("doc_times", {}).values())
+    avg_time = f"{sum(times) / len(times):.1f}s" if times else "—"
+
+    gw = config.ai_gateway.status()
+    gw_healthy = bool(gw.get("healthy")) and config.ai_gateway.has_capacity()
+
+    ui.glass_kpi_cards([
+        {"label": "Departments", "value": f"{len(live_dept_keys)}/{len(DEPARTMENTS)}",
+         "sub": "with live processors", "icon": "🏢"},
+        {"label": "Processors", "value": f"{len(installed)}/{len(procs)}",
+         "sub": "installed / registered", "icon": "🧩"},
+        {"label": "Today's Documents", "value": str(today_docs),
+         "sub": "processed today", "icon": "📄"},
+        {"label": "Average Confidence", "value": f"{avg_conf}%" if confidences else "—",
+         "sub": "this session",
+         "ring": {"score": avg_conf, "band": band(avg_conf)} if confidences else None,
+         "icon": "📈"},
+        {"label": "Avg Processing Time", "value": avg_time,
+         "sub": "per document", "icon": "⚡"},
+        {"label": "Estimated Cost", "value": f"₹ {totals['cost_inr']:.2f}",
+         "sub": "all-time", "icon": "₹"},
+        {"label": "Success Rate", "value": f"{success_rate}%", "sub": "all batches",
+         "ring": {"score": success_rate, "band": band(success_rate)}, "icon": "✅"},
+        {"label": "Gateway Health", "value": "Healthy" if gw_healthy else "Offline",
+         "sub": str(gw.get("model") or "—"), "icon": "🛡️"},
+    ])
+
+    ui.section_heading("🛡️ AI Gateway")
+    pending = sum(1 for d in manager.documents if d.status == "pending")
+    ui.render_gateway_status(gw, queue=pending, stage="Idle")
+
+    ui.section_heading("🏢 Department Summary")
+    ui.department_summary_cards([
+        {
+            "key": dept.key,
+            "name": dept.name,
+            "live": sum(1 for p in installed if p.spec.department_key == dept.key),
+            "total": sum(1 for p in procs if p.spec.department_key == dept.key),
+        }
+        for dept in DEPARTMENTS
+    ])
+
+    ui.processor_marketplace(
+        installed=[p.spec.business_process or p.spec.document_type for p in installed],
+        coming_soon=sorted(
+            {p.spec.business_process or p.spec.document_type for p in coming}
+        ),
+    )
+
+
 def _render_manual_mode(nav: Nav) -> None:
-    """Manual mode: pick a business process, then upload to that processor."""
+    """Manual mode: pick a business process via cards, then upload to it."""
     processes = business_processes_for_department(nav.department.key)
     if not processes:
         ui.coming_soon_hero(nav.department.name, "No processes configured yet")
@@ -254,26 +400,73 @@ def _render_manual_mode(nav: Nav) -> None:
         p for p in processes
         if p.spec.status in (PRODUCTION, COMING_SOON) or nav.dev_mode
     ]
-    labels = [
-        f"{p.spec.business_process or p.spec.document_type}"
-        + ("" if p.spec.status == PRODUCTION else f"  ·  {_status_word(p.spec.status)}")
-        for p in visible
-    ]
-    default = next((i for i, p in enumerate(visible) if p.spec.status == PRODUCTION), 0)
-    choice = st.selectbox(
-        "Business Process",
-        options=range(len(visible)),
-        format_func=lambda i: labels[i],
-        index=default,
+
+    # Selection state is kept per department so switching departments is sticky.
+    sel_key = f"proc_select:{nav.department.key}"
+    keys = [p.spec.use_case_key for p in visible]
+    default_key = next(
+        (p.spec.use_case_key for p in visible if p.spec.status == PRODUCTION),
+        keys[0],
     )
-    processor = visible[choice]
-    st.markdown(ui.lifecycle_chip(processor.spec.status), unsafe_allow_html=True)
+    current = st.session_state.get(sel_key)
+    if current not in keys:
+        current = default_key
+        st.session_state[sel_key] = current
+
+    _render_processor_cards(nav, visible, current, sel_key)
+
+    processor = next(p for p in visible if p.spec.use_case_key == current)
 
     if not _can_process(processor.spec, nav.dev_mode):
-        ui.coming_soon_hero(nav.department.name, processor.spec.business_process or processor.spec.document_type)
+        ui.coming_soon_hero(
+            nav.department.name,
+            processor.spec.business_process or processor.spec.document_type,
+        )
         return
 
     _render_uploader_and_process(nav, processor)
+
+
+def _render_processor_cards(
+    nav: Nav,
+    processors: list[BaseProcessor],
+    current_key: str,
+    sel_key: str,
+) -> None:
+    """Render premium selectable processor cards in a responsive grid.
+
+    The card is a visual surface (icon, department, name, status, confidence,
+    hover glow); a slim companion button under each card performs the actual
+    selection, keeping selection simple and reliable across reruns.
+    """
+    ui.section_heading("🗂️ Select a Business Process")
+    per_row = 3
+    for start in range(0, len(processors), per_row):
+        row = processors[start : start + per_row]
+        cols = st.columns(per_row)
+        for col, proc in zip(cols, row):
+            spec = proc.spec
+            selected = spec.use_case_key == current_key
+            with col:
+                st.markdown(
+                    ui.processor_card_html(
+                        name=spec.business_process or spec.document_type,
+                        dept_name=spec.department_name or nav.department.name,
+                        dept_key=spec.department_key or nav.department.key,
+                        status=spec.status,
+                        accuracy=spec.accuracy,
+                        selected=selected,
+                    ),
+                    unsafe_allow_html=True,
+                )
+                if st.button(
+                    "✓ Selected" if selected else "Select",
+                    key=f"pick:{nav.department.key}:{spec.use_case_key}",
+                    use_container_width=True,
+                    type="primary" if selected else "secondary",
+                ):
+                    st.session_state[sel_key] = spec.use_case_key
+                    st.rerun()
 
 
 def _render_auto_mode(nav: Nav) -> None:
@@ -545,16 +738,6 @@ def _render_upload_hint() -> None:
         f"</div>",
         unsafe_allow_html=True,
     )
-
-
-def _status_word(status: str) -> str:
-    """Short human label for a lifecycle status."""
-    return {
-        PRODUCTION: "Live",
-        TESTING: "Testing",
-        DRAFT: "Draft",
-        COMING_SOON: "Coming soon",
-    }.get(status, status)
 
 
 def main() -> None:

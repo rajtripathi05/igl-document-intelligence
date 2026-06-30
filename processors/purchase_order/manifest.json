@@ -7,6 +7,7 @@
   "document_type": "Sales Order",
   "business_process": "Sales Order",
   "status": "production",
+  "accuracy": 99,
   "json_suffix": "sales_order",
   "department": { "key": "marketing", "name": "Marketing", "icon": "📣", "order": 2 },
   "keywords": [

@@ -23,6 +23,7 @@ _DATE_PATHS = (
     ("gate_pass", "entry_date"),
     ("gate_pass", "manual_igp_date"),
     ("transporter", "gr_date"),
+    ("permits", "mf4_date"),
 )
 
 

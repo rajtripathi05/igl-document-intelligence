@@ -20,7 +20,6 @@ import pandas as pd
 import streamlit as st
 
 import ui
-from config import settings
 from document_state import DocumentState
 from preview import render_document
 from processors.spec import (
@@ -36,8 +35,13 @@ logger = logging.getLogger(__name__)
 
 
 def _dev_mode() -> bool:
-    """True when Developer Mode is active (raw JSON / audit are dev-only)."""
-    return bool(st.session_state.get("dev_mode", settings.dev_mode))
+    """True when Developer Mode is active (raw JSON / audit are dev-only).
+
+    Defaults to ``False``: Developer Mode is password-gated in the sidebar and
+    only becomes active once unlocked for the session, so business users never
+    see raw JSON or other internal structured data.
+    """
+    return bool(st.session_state.get("dev_mode", False))
 
 
 def render_document_workspace(doc: DocumentState) -> None:
