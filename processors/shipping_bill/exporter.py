@@ -131,6 +131,7 @@ class ShippingBillExcelGenerator:
                 ("FOB Value", invoice.get("fob_value")),
                 ("Freight", invoice.get("freight")),
                 ("Insurance", invoice.get("insurance")),
+                ("Commission", invoice.get("commission")),
                 ("Currency", invoice.get("currency")),
                 ("Exchange Rate", invoice.get("exchange_rate")),
             ],
@@ -163,13 +164,17 @@ class ShippingBillExcelGenerator:
             ],
         )
         row += 1
-        row = self._write_section(sheet, row, "Drawback")
+        row = self._write_section(sheet, row, "Drawback & Export Incentives")
         self._write_pairs(
             sheet,
             row,
             [
                 ("Drawback Claimed", drawback.get("drawback_claimed")),
-                ("Drawback Amount", drawback.get("drawback_amount")),
+                ("DBK Claim Amount", drawback.get("drawback_amount")),
+                ("DBK Rate (%)", drawback.get("dbk_rate")),
+                ("DBK Amount", drawback.get("dbk_amount")),
+                ("RODTEP Amount", drawback.get("rodtep_amount")),
+                ("Scheme Description", drawback.get("scheme_description")),
                 ("Drawback Details", drawback.get("drawback_details")),
             ],
         )

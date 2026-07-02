@@ -13,8 +13,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from ai_gateway import AIGateway, discover_models
-from api_key_manager import GeminiKeyManager
+from ai_gateway import AIGateway
+from providers.factory import build_provider
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -30,17 +30,24 @@ _ADMIN_PASSWORD_ENV_VARS = ("IGL_ADMIN_PASSWORD", "ADMIN_PASSWORD", "DEV_MODE_PA
 _ADMIN_PASSWORD_SECRET_KEYS = ("admin_password", "IGL_ADMIN_PASSWORD", "dev_mode_password")
 
 
+# Resolve the active provider + DEFAULT/RETRY models from the environment. The
+# platform is provider-agnostic: AI_PROVIDER selects the backend and models are
+# never hardcoded in the extraction engine (see ``providers`` and ``ai_gateway``).
+_provider_config = build_provider()
+
+
 @dataclass(frozen=True)
 class Settings:
     """Runtime settings loaded from environment variables."""
 
-    # Backward-compatible default model. The gateway discovers the full,
-    # configurable model priority list (GEMINI_MODEL_1..N); this single value is
-    # retained only for callers/tests that still ask for a default model. Models
-    # are never hardcoded inside the extraction engine — see ``ai_gateway``.
-    gemini_model: str = discover_models()[0]
-    # Development mode enables the non-sensitive Gemini key status indicator in
-    # the UI. Defaults to on; set APP_ENV=production (or DEV_MODE=false) to hide.
+    # Active AI provider name (e.g. "openrouter", "gemini") — display only.
+    ai_provider: str = _provider_config.provider_name
+    # DEFAULT_MODEL / RETRY_MODEL ids resolved from .env. Models are configurable
+    # only through the environment — never hardcoded in the extraction engine.
+    default_model: str = _provider_config.default_model
+    retry_model: str = _provider_config.retry_model
+    # Development mode enables the non-sensitive gateway status indicator in the
+    # UI. Defaults to on; set APP_ENV=production (or DEV_MODE=false) to hide.
     dev_mode: bool = os.getenv("APP_ENV", "development").lower() != "production" and (
         os.getenv("DEV_MODE", "true").lower() not in ("0", "false", "no")
     )
@@ -54,20 +61,25 @@ class Settings:
 settings = Settings()
 
 
-# Single shared Gemini key manager for the whole application. Modules obtain
-# keys exclusively through this manager and never read key env vars directly.
-gemini_key_manager = GeminiKeyManager()
-
-
 # Single shared Enterprise AI Gateway — the only entry point for AI requests.
-# Every processor and the classifier route Gemini calls through this instance so
-# key + model failover is applied uniformly. No module talks to Gemini directly.
-ai_gateway = AIGateway(key_manager=gemini_key_manager)
+# Every processor and the classifier route requests through this instance so the
+# provider + DEFAULT/RETRY model policy is applied uniformly. No module talks to
+# a provider directly.
+ai_gateway = AIGateway(
+    provider=_provider_config.provider,
+    default_model=_provider_config.default_model,
+    retry_model=_provider_config.retry_model,
+)
+
+
+def has_ai_key() -> bool:
+    """True if the active provider has an API key configured."""
+    return ai_gateway.has_capacity()
 
 
 def has_gemini_keys() -> bool:
-    """True if at least one Gemini API key is configured."""
-    return gemini_key_manager.has_keys()
+    """Backward-compatible alias for :func:`has_ai_key`."""
+    return has_ai_key()
 
 
 def _admin_password() -> str:

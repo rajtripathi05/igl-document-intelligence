@@ -168,6 +168,9 @@ class ProcessorSpec:
     manifest_version: str = "1.0"
     processor_version: str = "1.0"
     schema_version: str = "1.0"
+    # Optional SAP-critical fields (manifest ``sap.required``). When empty, the
+    # SAP-readiness engine falls back to the ``required`` fields in ``sections``.
+    sap_required: list[FieldSpec] = field(default_factory=list)
 
     @property
     def active(self) -> bool:
@@ -251,6 +254,18 @@ class ProcessorSpec:
         if status not in VALID_STATUSES:
             status = PRODUCTION
 
+        sap_manifest = manifest.get("sap") or {}
+        sap_required = [
+            FieldSpec(
+                path=f["path"],
+                label=f.get("label", f["path"]),
+                kind=FieldKind(f.get("kind", "text")),
+                required=True,
+            )
+            for f in sap_manifest.get("required", [])
+            if f.get("path")
+        ]
+
         return cls(
             use_case_key=key,
             document_type=manifest.get("document_type", key.replace("_", " ").title()),
@@ -272,6 +287,7 @@ class ProcessorSpec:
             manifest_version=str(manifest.get("manifest_version", "1.0")),
             processor_version=str(manifest.get("processor_version", "1.0")),
             schema_version=str(manifest.get("schema_version", "1.0")),
+            sap_required=sap_required,
         )
 
 

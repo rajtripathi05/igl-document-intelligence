@@ -63,6 +63,16 @@
       ]
     }
   ],
+  "sap": {
+    "required": [
+      { "path": "purchase_order.po_number", "label": "Order Number" },
+      { "path": "purchase_order.po_date", "label": "Order Date", "kind": "date" },
+      { "path": "buyer.gst_number", "label": "Buyer GST" },
+      { "path": "supplier.gst_number", "label": "Supplier GST" },
+      { "path": "purchase_order.currency", "label": "Currency" },
+      { "path": "summary.grand_total", "label": "Grand Total", "kind": "number" }
+    ]
+  },
   "line_items": {
     "path": "items",
     "columns": [

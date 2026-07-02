@@ -1,14 +1,17 @@
-"""Generic document processing engine.
+"""Generic document processing engine (review workspace).
 
-The engine renders extraction, field-level confidence, inline editing,
-re-export, preview, and validation for ANY processor — driven entirely by the
-processor's :class:`~processors.spec.ProcessorSpec`. No feature is hardcoded for
-a specific document type; adding a new processor automatically inherits all of
-this behaviour.
+The engine renders the review experience for ANY processor — driven entirely by
+the processor's :class:`~processors.spec.ProcessorSpec`. No feature is hardcoded
+for a specific document type; adding a new processor inherits all of this.
 
-The engine never calls Gemini during editing or re-export. Extraction happens
-once per uploaded document (in ``app.py`` orchestration); thereafter the edited
-data in :class:`~document_state.DocumentState` is the single source of truth.
+V2.3 review is a **split workspace**: an Acrobat-style PDF viewer on the left
+(confidence-coloured overlay boxes + click-to-scroll), and the editable business
+fields on the right, with a SAP-readiness badge and a single stronger-model
+retry. The viewer and the fields share one confidence heatmap palette.
+
+The engine never calls the AI during editing or re-export; extraction happens
+once (or once more via the single retry). Thereafter the edited data in
+:class:`~document_state.DocumentState` is the single source of truth.
 """
 
 from __future__ import annotations
@@ -19,9 +22,12 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+import field_locator
+import pdf_viewer
 import ui
+from config import ai_gateway
 from document_state import DocumentState
-from preview import render_document
+from processing import retry_extract_document
 from processors.spec import (
     FieldKind,
     FieldSpec,
@@ -33,94 +39,195 @@ from utils.confidence import band, field_score, overall_confidence, summarize
 
 logger = logging.getLogger(__name__)
 
+_NONE_CHOICE = "— none —"
+
 
 def _dev_mode() -> bool:
-    """True when Developer Mode is active (raw JSON / audit are dev-only).
-
-    Defaults to ``False``: Developer Mode is password-gated in the sidebar and
-    only becomes active once unlocked for the session, so business users never
-    see raw JSON or other internal structured data.
-    """
+    """True when Developer Mode is active (raw JSON / audit are dev-only)."""
     return bool(st.session_state.get("dev_mode", False))
 
 
-def render_document_workspace(doc: DocumentState) -> None:
-    """Render the full review workspace for one extracted document.
+def _scalar_fields(spec: ProcessorSpec) -> list[FieldSpec]:
+    """Flatten all scalar fields declared across the spec's sections."""
+    return [f for section in spec.sections for f in section.fields]
 
-    Args:
-        doc: The document state to render (must be supported and extracted).
-    """
+
+def render_document_workspace(doc: DocumentState) -> None:
+    """Render the full split review workspace for one extracted document."""
     if not doc.supported or doc.data is None:
         st.warning("This document could not be processed.")
         return
 
     spec = doc.processor.spec
+    pages, sizes, boxes = _locations(doc, spec)
+    focus = st.session_state.get(f"focus:{doc.doc_id}")
 
-    # Original document vs extracted data toggle (feature 9).
-    tab_data, tab_doc = st.tabs(["📝 Extracted Data", "📄 Original Document"])
+    left, right = st.columns([5, 4], gap="large")
 
-    with tab_doc:
-        _render_preview(doc)
+    with left:
+        ui.section_heading("📄 Original Document")
+        if pages:
+            pdf_viewer.render_viewer(
+                pages,
+                sizes,
+                boxes,
+                doc.confidence,
+                labels={f.path: f.label for f in _scalar_fields(spec)},
+                focus_path=focus,
+                height=820,
+            )
+        else:
+            st.info("No preview available for this file type.")
 
-    with tab_data:
+    with right:
         _render_overall_confidence(doc)
+        ui.sap_badge(doc.sap)
+        _render_retry(doc)
+        _render_locate_controls(doc, spec, boxes)
         ui.confidence_legend()
         ui.render_autofix_notes(doc.autofix_notes)
         _render_validation(doc)
         _render_summary(doc, spec)
-        _render_line_items(doc, spec)
-        if _dev_mode():
-            _render_developer_panels(doc)
-        _render_export(doc)
+
+    # Wide areas render full-width below the split.
+    _render_line_items(doc, spec)
+    if _dev_mode():
+        _render_developer_panels(doc)
+    _render_export(doc)
+
+
+# ----- Field location (hybrid) ------------------------------------------- #
+
+
+def _scalar_values(doc: DocumentState, spec: ProcessorSpec) -> dict[str, Any]:
+    """Current non-empty scalar values keyed by dotted path (for locating)."""
+    values: dict[str, Any] = {}
+    for fspec in _scalar_fields(spec):
+        value = get_path(doc.data, fspec.path)
+        if value not in (None, "", [], {}):
+            values[fspec.path] = value
+    return values
+
+
+def _locations(
+    doc: DocumentState, spec: ProcessorSpec
+) -> tuple[list[bytes], list[tuple[int, int]], dict[str, list[dict[str, float]]]]:
+    """Return (pages, sizes, boxes), rendering + text-locating once per session."""
+    pages_key = f"pages:{doc.doc_id}"
+    if pages_key not in st.session_state:
+        st.session_state[pages_key] = pdf_viewer.render_pages(doc.file_bytes, doc.mime_type)
+    pages, sizes = st.session_state[pages_key]
+
+    loc_key = f"loc:{doc.doc_id}"
+    if loc_key not in st.session_state:
+        st.session_state[loc_key] = field_locator.locate(
+            doc.file_bytes, doc.mime_type, _scalar_values(doc, spec)
+        )
+    return pages, sizes, st.session_state[loc_key]
+
+
+def _render_locate_controls(
+    doc: DocumentState, spec: ProcessorSpec, boxes: dict[str, list[dict[str, float]]]
+) -> None:
+    """Render the field-focus selector and the on-demand AI locate action."""
+    fields = _scalar_fields(spec)
+    labels = {f.path: f.label for f in fields}
+    located = set(boxes.keys())
+    options = [_NONE_CHOICE] + [f.path for f in fields]
+    current = st.session_state.get(f"focus:{doc.doc_id}") or _NONE_CHOICE
+    index = options.index(current) if current in options else 0
+
+    def _fmt(path: str) -> str:
+        if path == _NONE_CHOICE:
+            return _NONE_CHOICE
+        marker = "📍" if path in located else "○"
+        return f"{marker} {labels.get(path, path)}"
+
+    choice = st.selectbox(
+        "🔎 Highlight a field on the document",
+        options,
+        index=index,
+        format_func=_fmt,
+        key=f"{doc.doc_id}:focussel",
+    )
+    new_focus = None if choice == _NONE_CHOICE else choice
+    if new_focus != st.session_state.get(f"focus:{doc.doc_id}"):
+        st.session_state[f"focus:{doc.doc_id}"] = new_focus
+        st.rerun()
+
+    unlocated = [
+        f.path
+        for f in fields
+        if f.path not in located and get_path(doc.data, f.path) not in (None, "", [], {})
+    ]
+    if unlocated:
+        if st.button(
+            f"✨ Locate {len(unlocated)} remaining field(s) with AI",
+            key=f"{doc.doc_id}:ailoc",
+            use_container_width=True,
+            help="Uses the AI gateway to find fields text-search could not locate.",
+        ):
+            _ai_locate(doc, spec, unlocated)
+            st.rerun()
+
+
+def _ai_locate(doc: DocumentState, spec: ProcessorSpec, unlocated: list[str]) -> None:
+    """Augment located boxes with AI bounding boxes for unlocated fields."""
+    pages_key = f"pages:{doc.doc_id}"
+    pages, sizes = st.session_state.get(
+        pages_key, pdf_viewer.render_pages(doc.file_bytes, doc.mime_type)
+    )
+    if not pages:
+        return
+    if doc.mime_type == "application/pdf":
+        parts = [(png, "image/png") for png in pages]
+    else:
+        parts = [(pages[0], doc.mime_type)]
+    labels = {f.path: f.label for f in _scalar_fields(spec)}
+    values = {p: get_path(doc.data, p) for p in unlocated}
+    with st.spinner("Locating fields with AI…"):
+        ai_boxes = field_locator.locate_with_ai(values, parts, sizes, labels=labels)
+    merged = dict(st.session_state.get(f"loc:{doc.doc_id}", {}))
+    merged.update(ai_boxes)
+    st.session_state[f"loc:{doc.doc_id}"] = merged
+    if ai_boxes:
+        st.success(f"Located {len(ai_boxes)} additional field(s).")
+    else:
+        st.info("The AI could not confidently locate the remaining fields.")
+
+
+# ----- Retry (single, stronger model) ------------------------------------ #
+
+
+def _render_retry(doc: DocumentState) -> None:
+    """Render the single stronger-model retry control (one retry per document)."""
+    if doc.retry_message:
+        if doc.retry_message.startswith("Re-extracted"):
+            st.success(doc.retry_message)
+        else:
+            st.warning(doc.retry_message)
+
+    if st.button(
+        f"↻ Retry with stronger model ({ai_gateway.retry_model})",
+        disabled=doc.retry_used,
+        key=f"{doc.doc_id}:retry",
+        use_container_width=True,
+        help="Re-runs extraction once on the RETRY model. Only replaces data if it succeeds.",
+    ):
+        with st.spinner(f"Re-extracting with {ai_gateway.retry_model}…"):
+            retry_extract_document(doc)
+        # Data may have changed — refresh locations and re-render.
+        st.session_state.pop(f"loc:{doc.doc_id}", None)
+        st.rerun()
+
+
+# ----- Confidence / validation ------------------------------------------- #
 
 
 def _render_overall_confidence(doc: DocumentState) -> None:
     """Render the prominent overall document confidence badge + band breakdown."""
     score = overall_confidence(doc.confidence)
     ui.overall_confidence_badge(score, band(score), summarize(doc.confidence))
-
-
-def _render_developer_panels(doc: DocumentState) -> None:
-    """Render developer-only panels: raw JSON and the reviewer edit audit trail."""
-    audit = doc.build_audit()
-    if audit:
-        with st.expander(f"📝 Audit trail: {len(audit)} edited field(s)"):
-            st.dataframe(audit, use_container_width=True, hide_index=True)
-    with st.expander("🧾 Raw JSON (developer)"):
-        st.json(doc.data)
-
-
-# ----- Preview ----------------------------------------------------------- #
-
-
-def _render_preview(doc: DocumentState) -> None:
-    """Render page thumbnails and the full document preview."""
-    rendered = render_document(doc.file_bytes, doc.mime_type)
-    if not rendered.pages:
-        st.info("No preview available for this file type.")
-        return
-
-    if rendered.is_image:
-        st.image(rendered.pages[0], use_container_width=True)
-        return
-
-    page_count = len(rendered.pages)
-    if page_count > 1:
-        st.caption(f"{page_count} pages")
-        cols = st.columns(min(page_count, 6))
-        for index, thumb in enumerate(rendered.thumbnails):
-            with cols[index % len(cols)]:
-                st.image(thumb, caption=f"Page {index + 1}", use_container_width=True)
-        page_no = st.number_input(
-            "View page", min_value=1, max_value=page_count, value=1,
-            key=f"{doc.doc_id}_page",
-        )
-        st.image(rendered.pages[int(page_no) - 1], use_container_width=True)
-    else:
-        st.image(rendered.pages[0], use_container_width=True)
-
-
-# ----- Validation -------------------------------------------------------- #
 
 
 def _render_validation(doc: DocumentState) -> None:
@@ -142,7 +249,17 @@ def _render_validation(doc: DocumentState) -> None:
         )
 
 
-# ----- Editable summary (confidence-coloured) ---------------------------- #
+def _render_developer_panels(doc: DocumentState) -> None:
+    """Render developer-only panels: raw JSON and the reviewer edit audit trail."""
+    audit = doc.build_audit()
+    if audit:
+        with st.expander(f"📝 Audit trail: {len(audit)} edited field(s)"):
+            st.dataframe(audit, use_container_width=True, hide_index=True)
+    with st.expander("🧾 Raw JSON (developer)"):
+        st.json(doc.data)
+
+
+# ----- Editable summary (confidence-coloured heatmap) -------------------- #
 
 
 def _render_summary(doc: DocumentState, spec: ProcessorSpec) -> None:
@@ -196,7 +313,7 @@ def _render_line_items(doc: DocumentState, spec: ProcessorSpec) -> None:
         return
     items = get_path(doc.data, spec.line_items_path) or []
 
-    ui.section_heading("Line Items")
+    ui.section_heading("📋 Line Items")
     if spec.line_item_columns:
         column_order = [c.key for c in spec.line_item_columns]
         frame = pd.DataFrame(items)
@@ -220,11 +337,7 @@ def _render_line_items(doc: DocumentState, spec: ProcessorSpec) -> None:
 
 
 def _render_export(doc: DocumentState) -> None:
-    """Render Excel (and, in Developer Mode, JSON) download buttons.
-
-    Re-export uses the current (edited) data — Gemini is never called again.
-    Business users see Excel only; raw JSON is exposed only in Developer Mode.
-    """
+    """Render Excel (and, in Developer Mode, JSON) download buttons."""
     ui.section_heading("⬇️ Export")
     columns = st.columns(2) if _dev_mode() else [st.container()]
     with columns[0]:

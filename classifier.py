@@ -21,11 +21,9 @@ import json
 import logging
 from dataclasses import dataclass
 
-from google import genai
-from google.genai import types
-
 from ai_gateway import AIGateway, AIServiceUnavailable
 from processors.base import BaseProcessor
+from providers.base import AIError
 
 logger = logging.getLogger(__name__)
 
@@ -113,27 +111,21 @@ class DocumentClassifier:
             '"confidence": <0-100>}. Use null for use_case_key if none match.\n\n'
             f"CATALOG:\n{json.dumps(catalog, indent=2)}"
         )
-        part = types.Part.from_bytes(data=document_bytes, mime_type=mime_type)
-
-        def _call(api_key: str, model: str) -> str:
-            client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model=model,
-                contents=[instruction, part],
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json", temperature=0.0
-                ),
-            )
-            return getattr(response, "text", "") or "{}"
 
         try:
-            payload = json.loads(self._gateway.generate(_call))
+            response = self._gateway.extract(
+                system_prompt="",
+                instruction=instruction,
+                parts=[(document_bytes, mime_type)],
+                json_mode=True,
+            )
+            payload = json.loads(response.text)
         except AIServiceUnavailable:
-            # Every key/model is exhausted; fall back to keyword scoring rather
-            # than failing classification outright.
+            # The provider is exhausted/unconfigured; fall back to keyword scoring
+            # rather than failing classification outright.
             logger.warning("AI classification unavailable; using keyword fallback.")
             return None
-        except Exception:  # noqa: BLE001 - fall back to keyword scoring
+        except (AIError, ValueError, Exception):  # noqa: BLE001 - fall back to keywords
             logger.exception("AI classification failed; falling back to keywords.")
             return None
 

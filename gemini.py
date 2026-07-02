@@ -1,12 +1,17 @@
-"""Google Gemini integration boundary.
+"""Extraction client boundary (provider-agnostic).
 
-Gemini is responsible ONLY for extracting business information from uploaded
-Purchase Order documents. This module owns the AI extraction integration. It
-must not perform validation or Excel generation (see CLAUDE.md).
+This module owns the AI *extraction* integration for a processor: it loads the
+processor's prompts + schema, builds the extraction instruction, and delegates
+execution to the shared :class:`AIGateway`. The gateway selects the provider and
+the DEFAULT/RETRY model and applies retry policy — this client never talks to a
+provider or reads a key directly (see CLAUDE.md).
 
-Prompts are always loaded from the ``prompts/`` directory and never hardcoded.
-The schema is appended to the extraction prompt so the model returns data in
-the canonical shape.
+The class is named ``GeminiClient`` for backward compatibility with the plugin
+interface (``BaseProcessor.build_client`` returns one); it is provider-neutral
+and works with any configured backend (OpenRouter, Gemini, future providers).
+
+Prompts are always loaded from disk and never hardcoded. The schema is appended
+to the extraction prompt so the model returns data in the canonical shape.
 """
 
 from __future__ import annotations
@@ -16,10 +21,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from google import genai
-from google.genai import types
-
 from ai_gateway import AIGateway
+from providers.base import AIError
 from utils.helpers import read_text_file
 from utils.json_handler import load_schema, parse_model_json
 
@@ -64,16 +67,16 @@ _CONFIDENCE_GUIDANCE = (
 
 
 class GeminiExtractionError(RuntimeError):
-    """Raised when the Gemini extraction call fails or returns unusable output."""
+    """Raised when the extraction call fails or returns unusable output."""
 
 
 class GeminiClient:
-    """Client boundary for extracting document data via Google Gemini.
+    """Provider-neutral client for extracting document data via the AI gateway.
 
-    The client never selects a model or key itself. It builds the extraction
-    instruction and delegates execution to the shared :class:`AIGateway`, which
-    chooses the model + key and retries transparently across all of them. This
-    keeps every processor on the same failover policy.
+    The client never selects a provider, model, or key itself. It builds the
+    extraction instruction and delegates execution to the shared
+    :class:`AIGateway`, which chooses the provider + model and retries per policy.
+    This keeps every processor on the same, provider-agnostic path.
     """
 
     def __init__(
@@ -85,10 +88,6 @@ class GeminiClient:
     ) -> None:
         """Initialize the client and load prompts and schema from disk.
 
-        Keys and models are never chosen here; the gateway selects them at
-        request time so key + model failover can occur transparently. Models are
-        not hardcoded in this extraction engine — they come from the gateway.
-
         Args:
             gateway: The shared Enterprise AI Gateway (sole AI entry point).
             system_prompt_path: Path to the system prompt file.
@@ -96,12 +95,12 @@ class GeminiClient:
             schema_path: Path to the canonical document schema.
 
         Raises:
-            GeminiExtractionError: If no API keys are configured.
+            GeminiExtractionError: If no provider API key is configured.
         """
         if not gateway.has_capacity():
             raise GeminiExtractionError(
-                "No Gemini API keys configured. Set GEMINI_API_KEY or "
-                "GEMINI_API_KEY_1, GEMINI_API_KEY_2, ... in the .env file."
+                "No AI provider API key configured. Set AI_API_KEY (and "
+                "AI_PROVIDER / DEFAULT_MODEL / RETRY_MODEL) in the .env file."
             )
 
         self._gateway = gateway
@@ -110,7 +109,7 @@ class GeminiClient:
         self._schema = load_schema(schema_path)
         #: Token usage of the most recent request (populated after each call).
         self._last_usage: dict[str, int] = {}
-        logger.info("GeminiClient initialized (gateway-backed).")
+        logger.info("Extraction client initialized (gateway-backed).")
 
     @property
     def last_usage(self) -> dict[str, int]:
@@ -122,12 +121,6 @@ class GeminiClient:
 
         The OCR-understanding guidance and (optional) confidence-map request are
         appended at call time so the on-disk prompt files are never modified.
-
-        Args:
-            with_confidence: When True, also request a parallel confidence map.
-
-        Returns:
-            The full instruction text.
         """
         schema_text = json.dumps(self._schema, indent=2, ensure_ascii=False)
         instruction = (
@@ -141,67 +134,47 @@ class GeminiClient:
         return instruction
 
     def _generate(
-        self, parts: list[tuple[bytes, str]], with_confidence: bool
+        self,
+        parts: list[tuple[bytes, str]],
+        with_confidence: bool,
+        use_retry_model: bool = False,
     ) -> dict[str, Any]:
-        """Run an extraction call through the gateway with key + model failover.
+        """Run an extraction call through the gateway (provider-agnostic).
 
         Sends one or more document parts (a native PDF, or one image per page of
-        a preprocessed scan) as a single logical document. The request is retried
-        transparently across all configured models and API keys by the gateway;
-        the caller never re-uploads. Retryable vs. fatal classification is
-        centralized in the gateway. Token usage is captured for cost tracking.
+        a preprocessed scan) as a single logical document. Transient failures are
+        retried by the gateway; the caller never re-uploads. Token usage is
+        captured for cost tracking.
 
         Args:
             parts: A non-empty list of ``(bytes, mime_type)`` document parts.
             with_confidence: Whether to also request a parallel confidence map.
+            use_retry_model: When True, run against RETRY_MODEL (stronger model).
         """
-        document_parts = [
-            types.Part.from_bytes(data=data, mime_type=mime) for data, mime in parts
-        ]
         instruction = self._build_instruction(with_confidence)
         self._last_usage = {}
 
-        def _call(api_key: str, model: str) -> str:
-            client = genai.Client(api_key=api_key)
-            response = client.models.generate_content(
-                model=model,
-                contents=[instruction, *document_parts],
-                config=types.GenerateContentConfig(
-                    system_instruction=self._system_prompt,
-                    response_mime_type="application/json",
-                    temperature=0.0,
-                ),
-            )
-            self._capture_usage(response)
-            text = getattr(response, "text", None)
-            if not text:
-                raise GeminiExtractionError("Gemini returned no text output.")
-            return text
-
-        # The gateway raises AIServiceUnavailable when every model/key is
-        # exhausted, and re-raises fatal errors unchanged. Only the JSON parse
-        # path is reshaped here.
-        raw_text = self._gateway.generate(_call)
-
+        # The gateway raises AIServiceUnavailable when transient retries are
+        # exhausted, and FatalAIError on permanent provider errors. Only the JSON
+        # parse path is reshaped here.
         try:
-            return parse_model_json(raw_text)
-        except ValueError as exc:
-            logger.error("Failed to parse Gemini output as JSON.")
+            response = self._gateway.extract(
+                system_prompt=self._system_prompt,
+                instruction=instruction,
+                parts=parts,
+                json_mode=True,
+                use_retry_model=use_retry_model,
+            )
+        except AIError as exc:
+            # A fatal/unclassified provider error: surface as an extraction error.
             raise GeminiExtractionError(str(exc)) from exc
 
-    def _capture_usage(self, response: Any) -> None:
-        """Record token usage from a response's usage metadata (best-effort)."""
-        meta = getattr(response, "usage_metadata", None)
-        if meta is None:
-            return
-        input_tokens = int(getattr(meta, "prompt_token_count", 0) or 0)
-        output_tokens = int(getattr(meta, "candidates_token_count", 0) or 0)
-        total = int(getattr(meta, "total_token_count", 0) or (input_tokens + output_tokens))
-        self._last_usage = {
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "total_tokens": total,
-        }
+        self._last_usage = dict(response.usage or {})
+        try:
+            return parse_model_json(response.text)
+        except ValueError as exc:
+            logger.error("Failed to parse model output as JSON.")
+            raise GeminiExtractionError(str(exc)) from exc
 
     @staticmethod
     def _as_parts(
@@ -219,38 +192,45 @@ class GeminiClient:
         self,
         document: bytes | list[tuple[bytes, str]],
         mime_type: str | None = None,
+        *,
+        use_retry_model: bool = False,
     ) -> dict[str, Any]:
         """Extract standardized document data using the configured prompts/schema.
 
-        This is the document-agnostic extraction entry point. Accepts either raw
-        ``document`` bytes with a ``mime_type``, or an explicit list of
-        ``(bytes, mime_type)`` parts (e.g. preprocessed page images).
-
-        Returns:
-            The parsed extraction result as a dictionary.
+        Accepts either raw ``document`` bytes with a ``mime_type``, or an explicit
+        list of ``(bytes, mime_type)`` parts (e.g. preprocessed page images).
 
         Raises:
-            GeminiExtractionError: If the API call fails or output is unusable.
+            GeminiExtractionError: If the AI call fails or output is unusable.
         """
-        return self._generate(self._as_parts(document, mime_type), with_confidence=False)
+        return self._generate(
+            self._as_parts(document, mime_type),
+            with_confidence=False,
+            use_retry_model=use_retry_model,
+        )
 
     def extract_with_confidence(
         self,
         document: bytes | list[tuple[bytes, str]],
         mime_type: str | None = None,
+        *,
+        use_retry_model: bool = False,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
         """Extract data plus an AI-reported per-field confidence map.
 
         The confidence map (under the ``_confidence`` key) is requested via an
         appended instruction and stripped from the returned data so the document
-        still matches its schema. Accepts raw bytes + MIME type or an explicit
-        list of ``(bytes, mime_type)`` parts.
+        still matches its schema.
 
         Returns:
-            A tuple ``(data, ai_confidence_map)``. The confidence map may be
-            empty if the model omitted it; the engine falls back to heuristics.
+            A tuple ``(data, ai_confidence_map)``. The confidence map may be empty
+            if the model omitted it; the engine falls back to heuristics.
         """
-        result = self._generate(self._as_parts(document, mime_type), with_confidence=True)
+        result = self._generate(
+            self._as_parts(document, mime_type),
+            with_confidence=True,
+            use_retry_model=use_retry_model,
+        )
         ai_scores = result.pop("_confidence", {}) or {}
         if not isinstance(ai_scores, dict):
             ai_scores = {}

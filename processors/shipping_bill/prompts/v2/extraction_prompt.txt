@@ -126,8 +126,18 @@ below (field → owning section → JSON target).
 
 ── Drawback Details / Drawback Summary ───────────────
 • DBK Rate (%)  → drawback.dbk_rate
-  Labels: "DRAWBACK RATE", "DBK RATE", "DBK %", "RATE OF DRAWBACK". Extract
-  only the numeric value (e.g. 1.10 for "1.10%").
+  Labels: "DRAWBACK RATE", "DBK RATE", "DBK %", "RATE OF DRAWBACK".
+  In the ICEGATE "A. DRAWBACK & ROSL CLAIM" table the drawback row is laid out
+  as: INV SNO | ITEM SNO | DBK SNO | QTY/WT | VALUE | RATE | DBK AMT | ...
+  The DBK Rate is the "RATE" column of THAT drawback row (e.g. 1.2), sitting
+  immediately before the DBK AMT column. Extract only the numeric value
+  (e.g. 1.10 for "1.10%", 1.2 for a "1.2" rate).
+  Do NOT take the Exchange Rate, the item "6.RATE"/unit rate, or the CESS RATE.
+  Relationship (for understanding only — do NOT compute it yourself; Python
+  derives it when the printed rate is absent):
+  DBK Rate (%) = DBK Amount (INR) ÷ FOB Value in INR × 100, where
+  FOB Value in INR = FOB (Foreign Currency) × Customs Exchange Rate.
+  If the RATE column is genuinely not printed, return null for dbk_rate.
 • DBK Amount    → drawback.dbk_amount
   Labels: "DRAWBACK AMOUNT", "DBK AMT", "DUTY DRAWBACK AMT", "AMOUNT OF
   DRAWBACK". The computed/sanctioned drawback amount in INR. If 0, extract 0.

@@ -80,6 +80,19 @@ class DocumentState:
     audit_log: list[dict[str, Any]] = field(default_factory=list)
     # Token usage captured at extraction time ({input/output/total_tokens}).
     usage: dict[str, int] = field(default_factory=dict)
+    # Preprocessed document parts ([(bytes, mime)]) cached so a retry reuses the
+    # same OCR/preprocessing and only re-runs AI inference.
+    parts: list[tuple[bytes, str]] | None = None
+    # Concrete model id that produced the current ``data``.
+    model_used: str = ""
+    # Whether the single allowed retry (stronger model) has been consumed.
+    retry_used: bool = False
+    # Non-sensitive note describing the last retry outcome (for the UI).
+    retry_message: str = ""
+    # Wall-clock extraction time in milliseconds (for cost/health dashboards).
+    proc_ms: int = 0
+    # SAP-readiness assessment (``sap.SapReadiness``) computed post-extraction.
+    sap: Any = None
 
     @property
     def supported(self) -> bool:

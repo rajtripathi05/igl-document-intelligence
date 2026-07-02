@@ -81,6 +81,16 @@
       ]
     }
   ],
+  "sap": {
+    "required": [
+      { "path": "gate_pass.gate_pass_number", "label": "Gate Pass No." },
+      { "path": "purchase_order.po_number", "label": "PO Number" },
+      { "path": "purchase_order.po_date", "label": "PO Date", "kind": "date" },
+      { "path": "vendor.code", "label": "Vendor Code" },
+      { "path": "vendor.name", "label": "Vendor Name" },
+      { "path": "delivery.vehicle_number", "label": "Vehicle No." }
+    ]
+  },
   "line_items": {
     "path": "items",
     "columns": [

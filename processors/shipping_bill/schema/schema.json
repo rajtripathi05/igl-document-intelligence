@@ -43,6 +43,7 @@
     "fob_value": 0,
     "freight": 0,
     "insurance": 0,
+    "commission": 0,
     "currency": "",
     "exchange_rate": 0
   },
@@ -78,6 +79,10 @@
   "drawback": {
     "drawback_claimed": false,
     "drawback_amount": 0,
+    "dbk_rate": null,
+    "dbk_amount": 0,
+    "rodtep_amount": 0,
+    "scheme_description": null,
     "drawback_details": null
   },
   "remarks": [],

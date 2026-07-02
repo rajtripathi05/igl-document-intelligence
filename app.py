@@ -27,9 +27,10 @@ import admin
 import config
 import consolidated_excel
 import cost
+import duplicates
 import history
 import ui
-from config import has_gemini_keys, settings
+from config import has_ai_key, settings
 from departments import DEPARTMENTS, Department
 from document_state import DocumentManager, DocumentState
 from engine import render_document_workspace
@@ -234,11 +235,19 @@ def _run_processing(
     timings: dict[str, float] = st.session_state.setdefault("doc_times", {})
     started_at: dict[str, float] = {}
 
+    _STAGE_LABELS = {
+        "classifying": "Classifying", "ocr": "OCR", "ai": "AI Extraction",
+        "extraction": "Extraction", "validation": "Validation",
+        "confidence": "Confidence", "sap": "SAP Readiness", "done": "Completed",
+    }
+
     def _progress(done: float, count: int, doc: DocumentState, phase: str) -> None:
         if phase == "classifying":
             started_at[doc.doc_id] = time.perf_counter()
         elif phase == "done" and doc.doc_id in started_at:
             timings[doc.doc_id] = time.perf_counter() - started_at[doc.doc_id]
+        config.ai_gateway.set_stage(_STAGE_LABELS.get(phase, phase.title()))
+        config.ai_gateway.set_queue(max(count - int(done), 0))
         theater.update(done, count, doc, phase)
 
     classifier = None
@@ -247,6 +256,7 @@ def _run_processing(
         classifier = build_classifier()
         candidates = production_processors_for_department(nav.department.key) or active_processors()
 
+    config.ai_gateway.set_queue(len(docs))
     process_batch(
         docs,
         processor=processor,
@@ -255,6 +265,8 @@ def _run_processing(
         progress_cb=_progress,
     )
     theater.finish()
+    config.ai_gateway.set_stage("Idle")
+    config.ai_gateway.set_queue(0)
 
     for doc in docs:
         manager.add(doc)
@@ -320,7 +332,9 @@ def _render_management_dashboard(nav: Nav) -> None:
     coming = [p for p in procs if p.spec.status == COMING_SOON]
     live_dept_keys = {p.spec.department_key for p in installed}
 
-    totals = cost.summary()["totals"]
+    cost_summary = cost.summary()
+    totals = cost_summary["totals"]
+    today_usage = cost_summary.get("today", {})
 
     batches = history.list_batches()
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -361,7 +375,11 @@ def _render_management_dashboard(nav: Nav) -> None:
         {"label": "Success Rate", "value": f"{success_rate}%", "sub": "all batches",
          "ring": {"score": success_rate, "band": band(success_rate)}, "icon": "✅"},
         {"label": "Gateway Health", "value": "Healthy" if gw_healthy else "Offline",
-         "sub": str(gw.get("model") or "—"), "icon": "🛡️"},
+         "sub": str(gw.get("provider") or "—").title(), "icon": "🛡️"},
+        {"label": "Today's AI Cost", "value": f"₹ {today_usage.get('cost_inr', 0):.2f}",
+         "sub": f"{today_usage.get('tokens', 0):,} tokens today", "icon": "₹"},
+        {"label": "Retry Usage", "value": str(cost_summary.get("retry_count", 0)),
+         "sub": "stronger-model retries", "icon": "↻"},
     ])
 
     ui.section_heading("🛡️ AI Gateway")
@@ -485,7 +503,7 @@ def _render_auto_mode(nav: Nav) -> None:
 
 
 def _render_uploader_and_process(nav: Nav, processor: BaseProcessor | None) -> None:
-    """Render the upload hint, uploader, and the process button."""
+    """Render the upload hint, uploader, cost predictor, duplicate check, process."""
     _render_upload_hint()
     target = processor.spec.business_process if processor else f"{nav.department.name} documents"
     uploaded_files = st.file_uploader(
@@ -494,9 +512,86 @@ def _render_uploader_and_process(nav: Nav, processor: BaseProcessor | None) -> N
         accept_multiple_files=True,
         label_visibility="collapsed",
     )
-    if uploaded_files and st.button("⚡ Process Documents", type="primary"):
-        docs = _build_doc_states(uploaded_files)
-        _run_processing(nav, docs, processor)
+    if not uploaded_files:
+        return
+
+    # Cost predictor — set expectations before any AI call.
+    _render_cost_prediction(uploaded_files)
+
+    # Duplicate detection — never reprocess a known document silently.
+    dupes = _detect_duplicates(uploaded_files)
+    if dupes:
+        _render_duplicate_cards(dupes)
+        col_go, col_cancel = st.columns(2)
+        with col_go:
+            proceed = st.button(
+                "⚠️ Continue Anyway", type="primary", use_container_width=True
+            )
+        with col_cancel:
+            if st.button("Cancel", use_container_width=True):
+                st.info("Processing cancelled. Remove the file(s) above or continue anyway.")
+                st.stop()
+        if proceed:
+            _run_processing(nav, _build_doc_states(uploaded_files), processor)
+        return
+
+    if st.button("⚡ Process Documents", type="primary"):
+        _run_processing(nav, _build_doc_states(uploaded_files), processor)
+
+
+def _page_count(file_bytes: bytes, mime_type: str) -> int:
+    """Cheaply count pages for the cost predictor (PDF page count; else 1)."""
+    if mime_type == "application/pdf":
+        try:
+            import fitz  # PyMuPDF
+
+            with fitz.open(stream=file_bytes, filetype="pdf") as doc:
+                return max(doc.page_count, 1)
+        except Exception:  # noqa: BLE001 - prediction is best-effort
+            return 1
+    return 1
+
+
+def _render_cost_prediction(uploaded_files: list) -> None:
+    """Show the predicted tokens + ₹ cost before processing (no AI call)."""
+    total_pages = 0
+    for uploaded in uploaded_files:
+        try:
+            mime = guess_mime_type(uploaded.name)
+        except ValueError:
+            continue
+        total_pages += _page_count(uploaded.getvalue(), mime)
+    prediction = cost.predict(total_pages, settings.default_model)
+    ui.kpi_cards([
+        ("Documents", str(len(uploaded_files)), f"~{total_pages} page(s)"),
+        ("Est. tokens", f"{prediction['expected_tokens']:,}", "predicted"),
+        ("Est. cost", f"₹ {prediction['est_cost_inr']:.2f}", prediction["model"]),
+    ])
+
+
+def _detect_duplicates(uploaded_files: list) -> list[tuple[str, dict]]:
+    """Return (filename, record) for uploads whose fingerprint was seen before."""
+    found: list[tuple[str, dict]] = []
+    for uploaded in uploaded_files:
+        record = duplicates.check(duplicates.fingerprint(uploaded.getvalue()))
+        if record:
+            found.append((uploaded.name, record))
+    return found
+
+
+def _render_duplicate_cards(dupes: list[tuple[str, dict]]) -> None:
+    """Render the 'Already Processed' warning for duplicate uploads."""
+    rows = "".join(
+        f'<div class="igl-dup-meta"><b>{name}</b> — processed '
+        f'{rec.get("date", "?")} · {rec.get("processor", "?")} · '
+        f'{rec.get("department", "?")}</div>'
+        for name, rec in dupes
+    )
+    st.markdown(
+        f'<div class="igl-dup"><div class="igl-dup-title">'
+        f"⚠️ {len(dupes)} document(s) already processed</div>{rows}</div>",
+        unsafe_allow_html=True,
+    )
 
 
 # ----- Register downloads (primary business export) --------------------- #
@@ -670,11 +765,22 @@ def _render_cost_health_view() -> None:
     ui.section_heading("💸 Cost Dashboard")
     summary = cost.summary()
     totals = summary["totals"]
+    today = summary.get("today", {})
     ui.kpi_cards([
-        ("Documents (AI)", str(totals["docs"]), "extracted via Gemini"),
+        ("Documents (AI)", str(totals["docs"]), "all-time extractions"),
         ("Tokens", f"{totals['tokens']:,}", "total"),
         ("Estimated cost", f"₹ {totals['cost_inr']:.2f}", "all-time"),
+        ("Avg cost / doc", f"₹ {totals.get('avg_cost_inr', 0):.3f}", f"~{totals.get('avg_tokens', 0):,} tokens"),
+        ("Avg time / doc", f"{totals.get('avg_proc_ms', 0) / 1000:.1f}s", "processing"),
+        ("Retry usage", str(summary.get("retry_count", 0)), "stronger-model retries"),
+        ("Today", f"₹ {today.get('cost_inr', 0):.2f}", f"{today.get('docs', 0)} docs · {today.get('tokens', 0):,} tokens"),
     ])
+    if summary.get("by_model"):
+        st.caption("By model (DEFAULT vs RETRY)")
+        st.dataframe(
+            [{"Model": k, **v} for k, v in summary["by_model"].items()],
+            use_container_width=True, hide_index=True,
+        )
     if summary["by_processor"]:
         st.caption("By processor")
         st.dataframe(
@@ -752,11 +858,11 @@ def main() -> None:
 
     nav = _render_sidebar()
 
-    if not has_gemini_keys():
+    if not has_ai_key():
         st.error(
-            "No Gemini API key is configured. Add GEMINI_API_KEY (or "
-            "GEMINI_API_KEY_1, GEMINI_API_KEY_2, ...) to the .env file and "
-            "restart the application."
+            f"No API key is configured for the '{settings.ai_provider}' provider. "
+            "Set AI_PROVIDER and AI_API_KEY (and DEFAULT_MODEL / RETRY_MODEL) in "
+            "the .env file and restart the application."
         )
 
     if nav.view == "process":

@@ -167,11 +167,48 @@ def _logo_html(logo_path: Path, css_class: str = "igl-logo") -> str:
 
 
 # ---------------------------------------------------------------------------
+# V2.3 supplemental styles (SAP badge, processor-card glow, duplicate card).
+# Kept separate from the large base theme so additions stay low-risk.
+# ---------------------------------------------------------------------------
+_V23_CSS = """
+<style>
+/* SAP-readiness badge */
+.igl-sap { background: linear-gradient(135deg, rgba(255,255,255,0.035), rgba(255,255,255,0.01));
+           border:1px solid rgba(255,255,255,0.08); border-left:4px solid var(--sap);
+           border-radius:14px; padding:14px 16px; margin:0 0 14px 0; }
+.igl-sap-top { display:flex; align-items:center; gap:14px; }
+.igl-sap-score { font-size:30px; font-weight:800; color:var(--sap); line-height:1; }
+.igl-sap-score small { font-size:14px; font-weight:700; opacity:.8; }
+.igl-sap-meta { display:flex; flex-direction:column; gap:2px; }
+.igl-sap-label { font-weight:700; color:#fff; font-size:15px; }
+.igl-sap-sub { font-size:12px; color:rgba(255,255,255,0.60); }
+.igl-sap-reasons { margin:10px 0 0 0; padding:0 0 0 18px; color:rgba(255,255,255,0.78);
+                   font-size:12.5px; }
+.igl-sap-reasons li { margin:2px 0; }
+
+/* Processor-card hover glow + soft shadow */
+.igl-pcard { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+.igl-pcard:hover { transform: translateY(-3px);
+                   box-shadow: 0 16px 40px rgba(21,101,192,0.35);
+                   border-color: rgba(59,130,246,0.55) !important; }
+
+/* Duplicate-document warning card */
+.igl-dup { background: rgba(251,191,36,0.08); border:1px solid rgba(251,191,36,0.40);
+           border-radius:14px; padding:14px 16px; margin:8px 0 12px; }
+.igl-dup-title { font-weight:700; color:#FBBF24; margin-bottom:6px; }
+.igl-dup-meta { font-size:13px; color:rgba(255,255,255,0.82); line-height:1.7; }
+.igl-dup-meta b { color:#fff; }
+</style>
+"""
+
+
+# ---------------------------------------------------------------------------
 # Global theme
 # ---------------------------------------------------------------------------
 def inject_theme() -> None:
     """Inject the global premium enterprise CSS (SAP Fiori × Apple HIG)."""
     st.markdown(_THEME_CSS, unsafe_allow_html=True)
+    st.markdown(_V23_CSS, unsafe_allow_html=True)
     # Decorative scientific lattice behind all content (pointer-events:none).
     # The molecular hex grid + particle cloud + company-identity motifs are all
     # painted by this layer at very low opacity; the floating SVG glyphs are a
@@ -1001,6 +1038,41 @@ def overall_confidence_badge(score: int, band_name: str, counts: dict[str, int] 
     )
 
 
+def sap_badge(readiness: object | None) -> None:
+    """Render the SAP-readiness badge (score, status, and blocking reasons).
+
+    Colours mirror the confidence palette: green (Ready ≥95), amber (Needs
+    Review 75–94), red (Not Ready <75). ``readiness`` is a ``sap.SapReadiness``
+    (or None, in which case nothing renders).
+    """
+    if readiness is None:
+        return
+    status = getattr(readiness, "status", "review")
+    color = {"ready": ACCENT, "review": WARNING, "error": ERROR}.get(status, WARNING)
+    icon = {"ready": "✅", "review": "🟡", "error": "🔴"}.get(status, "🟡")
+    score = int(getattr(readiness, "score", 0))
+    label = str(getattr(readiness, "label", ""))
+    present = int(getattr(readiness, "present", 0))
+    total = int(getattr(readiness, "total", 0))
+    reasons = list(getattr(readiness, "reasons", []) or [])
+
+    reasons_html = ""
+    if reasons:
+        items = "".join(f"<li>{r}</li>" for r in reasons[:6])
+        reasons_html = f'<ul class="igl-sap-reasons">{items}</ul>'
+
+    st.markdown(
+        f'<div class="igl-sap" style="--sap:{color};">'
+        f'<div class="igl-sap-top">'
+        f'<span class="igl-sap-score">{score}<small>%</small></span>'
+        f'<div class="igl-sap-meta">'
+        f'<div class="igl-sap-label">{icon} {label}</div>'
+        f'<div class="igl-sap-sub">SAP-critical fields: {present}/{total} present</div>'
+        f"</div></div>{reasons_html}</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def lifecycle_chip(status: str) -> str:
     """Return an HTML lifecycle status chip (production/testing/draft/coming_soon)."""
     label = {
@@ -1323,30 +1395,33 @@ def render_gateway_status(
         stage: Human-readable current processing stage.
     """
     healthy = bool(status.get("healthy"))
+    provider = str(status.get("provider") or "—").title()
     model = str(status.get("model") or "—")
-    key_number = int(status.get("key_number", 0))
-    total = int(status.get("total_keys", 0))
+    default_model = str(status.get("default_model") or "—")
+    retry_model = str(status.get("retry_model") or "—")
     retries = int(status.get("retries", 0))
+    used_retry = bool(status.get("used_retry_model"))
+    # Prefer the gateway's own live stage/queue when present.
+    stage = str(status.get("stage") or stage)
+    queue = int(status.get("queue", queue) or queue)
 
     if not healthy:
         label, color = "Offline", ERROR
-    elif retries > 0:
-        label, color = "Recovered", WARNING
+    elif used_retry:
+        label, color = "Retry Model", WARNING
     else:
         label, color = "Healthy", ACCENT
 
-    key_txt = f"Key {key_number}" if key_number else "—"
-
-    # When the last request rotated keys, visualize the failover sequence.
+    # During/after a retry, visualize the DEFAULT → RETRY model escalation.
     switch = ""
-    if retries > 0 and key_number:
+    if used_retry:
         switch = (
             '<div class="igl-gw-switch">'
-            '<span class="igl-gw-keychip from">Key 1</span>'
+            f'<span class="igl-gw-keychip from">{default_model}</span>'
             '<span class="igl-gw-arrow">→</span>'
-            f'<span class="igl-gw-keychip to">Key {key_number}</span>'
+            f'<span class="igl-gw-keychip to">{retry_model}</span>'
             '<span class="igl-gw-arrow">→</span>'
-            '<span class="igl-gw-keychip ok">✓ Success</span>'
+            '<span class="igl-gw-keychip ok">✓ Processed</span>'
             '</div>'
         )
 
@@ -1360,12 +1435,12 @@ def render_gateway_status(
                 </span>
             </div>
             <div class="igl-gw-grid">
-                <div class="igl-gw-cell"><div class="k">Model</div><div class="v">{model}</div></div>
-                <div class="igl-gw-cell"><div class="k">API Key</div><div class="v">{key_txt} / {total}</div></div>
+                <div class="igl-gw-cell"><div class="k">Provider</div><div class="v">{provider}</div></div>
+                <div class="igl-gw-cell"><div class="k">Current Model</div><div class="v">{model}</div></div>
+                <div class="igl-gw-cell"><div class="k">Retry Model</div><div class="v">{retry_model}</div></div>
                 <div class="igl-gw-cell"><div class="k">Retry Count</div><div class="v">{retries}</div></div>
-                <div class="igl-gw-cell"><div class="k">Queue Size</div><div class="v">{queue}</div></div>
+                <div class="igl-gw-cell"><div class="k">Queue</div><div class="v">{queue}</div></div>
                 <div class="igl-gw-cell"><div class="k">Stage</div><div class="v">{stage}</div></div>
-                <div class="igl-gw-cell"><div class="k">Failover</div><div class="v">Key + Model</div></div>
             </div>
             {switch}
         </div>
@@ -1428,14 +1503,15 @@ class ProcessingTheater:
     #: phase keys stay aligned to the backend pipeline so behaviour is unchanged.
     STAGES = (
         ("ocr", "📄", "Document → Atoms"),
-        ("ai", "⚛️", "Atoms → Molecules"),
+        ("ai", "⚛️", "AI Extraction"),
         ("extraction", "🕸️", "Scientific Network"),
-        ("validation", "🧠", "AI Core"),
-        ("confidence", "📊", "Structured Business Data"),
+        ("validation", "🧠", "Validation"),
+        ("confidence", "📊", "Confidence"),
+        ("sap", "🧾", "SAP Readiness"),
         ("excel", "📗", "Excel"),
     )
     #: per-document phases emitted by ``extract_document`` (in display order).
-    _PHASE_ORDER = ("ocr", "ai", "extraction", "validation", "confidence")
+    _PHASE_ORDER = ("ocr", "ai", "extraction", "validation", "confidence", "sap")
 
     def __init__(self, total: int, gateway: dict | None = None) -> None:
         self.total = max(int(total), 1)
@@ -1447,7 +1523,7 @@ class ProcessingTheater:
         self.fraction = 0.0
         gateway = gateway or {}
         self.model = str(gateway.get("model") or "—")
-        self.key_number = int(gateway.get("key_number", 0) or 0)
+        self.provider = str(gateway.get("provider") or "—")
         self.healthy = bool(gateway.get("healthy", True))
         self._stages = {key: "pending" for key, _, _ in self.STAGES}
 
@@ -1513,14 +1589,13 @@ class ProcessingTheater:
     def _telemetry_html(self) -> str:
         gw_label = "Online" if self.healthy else "Offline"
         gw_color = ACCENT if self.healthy else ERROR
-        key_txt = f"#{self.key_number}" if self.key_number else "—"
         cells = [
             ("Document", f"{min(self.current, self.total)} / {self.total}"),
             ("Completed", f"{self.completed} / {self.total}"),
             ("Elapsed", _fmt_secs(time.perf_counter() - self.start)),
             ("Est. remaining", self._eta()),
+            ("Provider", self.provider.title()),
             ("AI Model", self.model),
-            ("Active Key", key_txt),
         ]
         body = "".join(
             f'<div class="igl-tele"><div class="k">{k}</div><div class="v">{v}</div></div>'

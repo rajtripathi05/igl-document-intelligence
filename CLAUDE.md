@@ -14,7 +14,20 @@ processor means adding a folder (or using the Admin panel).
 
 Long-term goal: SAP integration.
 
-## Current Status — Version 2.0
+## Current Status — Version 2.3
+
+V2.3 (Enterprise AI Gateway & UX upgrade) adds, on top of everything below:
+a **provider-agnostic AI Gateway** (OpenRouter default; Gemini retained;
+Claude/OpenAI/DeepSeek/etc. are drop-in `providers/` classes) selected purely
+from `.env` (`AI_PROVIDER`/`AI_API_KEY`/`DEFAULT_MODEL`/`RETRY_MODEL`); a single
+controlled **stronger-model retry** (reuses OCR/preprocess, replaces data only on
+success, one retry per document); a **cost predictor** (₹ before processing) plus
+per-model / retry / today cost analytics; **duplicate detection** (content
+fingerprint with Continue Anyway / Cancel); **SAP-readiness** scoring per document;
+and a **split Acrobat-style review** (PDF viewer with hybrid text-anchor + AI
+bounding-box field highlighting, click-to-scroll, confidence heatmap). The
+workflow is unchanged: Department → Business Process → Upload → Process → Review →
+Download.
 
 Live (production) processors:
 
@@ -54,13 +67,34 @@ Platform capabilities (work automatically for every processor):
     ₹ estimate per processor/department/month), and Processor Health.
 12. **Admin panel** — onboard a processor by uploading its prompt/schema/template/
     samples; lifecycle **draft → testing → production**.
-13. **AI Gateway** — multiple API keys + multiple models with automatic rotation,
-    model fallback, and graceful failover (unchanged from V1).
+13. **Provider-agnostic AI Gateway** — one entry point for all AI. `AI_PROVIDER`
+    selects the backend (OpenRouter / Gemini / future Claude, OpenAI, DeepSeek…);
+    `DEFAULT_MODEL` serves normal processing and `RETRY_MODEL` serves the single
+    stronger-model retry. Transient errors (429/5xx/timeouts) are retried with
+    exponential backoff; fatal errors surface immediately. Processors never know
+    the provider or model — they only call `extract()` / retry. Keys are never
+    logged, displayed, saved, or placed in exceptions.
+14. **Single controlled retry** — one "Retry with stronger model" per document in
+    review; reuses OCR/preprocessing, runs `RETRY_MODEL`, replaces the extraction
+    only on success (never overwrites good data), then disables further retries.
+15. **Cost predictor** — estimated tokens + ₹ shown before processing; cost
+    dashboard splits by model (DEFAULT vs RETRY), tracks retry usage, today's
+    spend, and per-document averages (cost / tokens / time).
+16. **Duplicate detection** — a content fingerprint warns "Already Processed"
+    (date / processor / department) with Continue Anyway or Cancel before running.
+17. **SAP readiness** — each document is scored (Ready ≥95 / Needs Review 75–94 /
+    Not Ready <75) from processor-declared SAP-critical fields, with reasons.
+18. **Split Acrobat-style review** — original PDF on the left with confidence-
+    coloured overlay boxes (hybrid: PyMuPDF text-anchor + on-demand AI bounding
+    boxes) and click-to-scroll; editable business fields on the right sharing the
+    same confidence heatmap palette.
 
 ## Technology
 
 - Python 3.11+, Streamlit
-- Google Gemini API (`google-genai` SDK)
+- Provider-agnostic AI Gateway: OpenRouter (OpenAI-compatible REST via `httpx`,
+  default) and Google Gemini (`google-genai` SDK); new providers are drop-in
+  `providers/` classes
 - OpenPyXL (Excel registers + per-doc workbooks), Pandas (editable tables)
 - PyMuPDF (preview + scanned-PDF rasterization + text probe)
 - Pillow (+ optional OpenCV `opencv-python-headless` for deskew/denoise)
@@ -140,12 +174,23 @@ from the UI.
 - `preview.py`: PDF/image preview rendering.
 - `ui.py`: India Glycols branding + premium design system (~70% SAP Fiori,
   ~30% Apple HIG). No business logic.
-- `config.py`: App config + shared singletons (`gemini_key_manager`,
-  `ai_gateway`). Secrets from env only.
-- `ai_gateway.py` / `api_key_manager.py` / `gemini_errors.py`: AI Gateway
-  (key + model failover), key discovery/rotation, error classification.
-- `gemini.py`: Gemini client boundary; accepts raw bytes or preprocessed image
-  parts; captures token usage; delegates execution to the gateway.
+- `config.py`: App config + shared singleton `ai_gateway`; builds the active
+  provider via `providers.build_provider()`. Secrets from env only.
+- `ai_gateway.py`: Provider + DEFAULT/RETRY model orchestrator (transient-error
+  backoff, live stage/queue status). `gemini_errors.py`: error classification
+  (transient vs. fatal), reused by providers.
+- `providers/`: provider-agnostic backends — `base.py` (`Provider` contract,
+  `ProviderResponse`, `AIError`/`TransientAIError`/`FatalAIError`),
+  `openrouter.py` (OpenAI-compatible REST via httpx, default), `gemini.py`
+  (google-genai, single key), `factory.py` (`AI_PROVIDER` → provider),
+  `_images.py` (PDF→image for OpenAI-style providers).
+- `gemini.py`: Per-processor extraction client boundary; builds the instruction
+  and delegates to the gateway (provider-neutral); captures token usage; carries
+  a `use_retry_model` flag.
+- `sap.py`: SAP-readiness assessment (spec-driven critical fields, score/reasons).
+- `duplicates.py`: content-fingerprint index for duplicate detection.
+- `field_locator.py`: hybrid field location (PyMuPDF text-anchor + AI bbox).
+- `pdf_viewer.py`: Acrobat-style review viewer (HTML overlay boxes + scroll).
 
 ### Plugin framework
 - `processors/base.py`: `BaseProcessor` interface (spec, build_client,
@@ -180,9 +225,11 @@ from the UI.
 ## Coding Principles & Non-Negotiable Rules
 
 - Clean architecture, modular, single responsibility; UI separate from logic.
-- Gemini ONLY extracts business information (and reports confidence). ALL AI
-  requests go through the `ai_gateway` single entry point.
-- Models are configurable (`GEMINI_MODEL_1..N`), never hardcoded in extraction.
+- The AI provider ONLY extracts business information (and reports confidence).
+  ALL AI requests go through the `ai_gateway` single entry point, and no
+  processor knows which provider or model is used.
+- Provider and models are configurable via `.env` (`AI_PROVIDER`, `AI_API_KEY`,
+  `DEFAULT_MODEL`, `RETRY_MODEL`), never hardcoded in extraction.
 - Python performs preprocessing, auto-fix, validation, and Excel generation.
 - Excel is ALWAYS generated from standardized JSON, never directly from Gemini.
 - The JSON schema is the single source of truth; schemas are explicit/hand-authored.
@@ -194,10 +241,17 @@ from the UI.
 
 ```bash
 pip install -r requirements.txt
-# .env with one or more keys and (optionally) a model priority list:
-#   GEMINI_API_KEY_1=...   (add _2 ... _N for failover)
-#   GEMINI_MODEL_1=gemini-2.5-flash   (add _2 ... _N, tried in order)
-# Optional cost rates: GEMINI_INPUT_COST_PER_1K_INR, GEMINI_OUTPUT_COST_PER_1K_INR
+# .env — provider-agnostic AI configuration (V2.3). Switch provider or models by
+# editing ONLY this file; no source changes.
+#   AI_PROVIDER=openrouter        # or: gemini  (future: claude, openai, deepseek…)
+#   AI_API_KEY=...                # a single key for the selected provider
+#   DEFAULT_MODEL=google/gemini-flash-latest   # normal processing
+#   RETRY_MODEL=google/gemini-pro-latest       # the one-click "stronger" retry
+# Optional cost rates: AI_INPUT_COST_PER_1K_INR, AI_OUTPUT_COST_PER_1K_INR
+#   (GEMINI_*_COST_PER_1K_INR still honoured as a fallback).
+# Legacy GEMINI_API_KEY_* are used only when AI_PROVIDER=gemini and AI_API_KEY
+# is empty (the built-in Gemini provider picks the first one — handy for testing
+# before an OpenRouter key is provisioned).
 # APP_ENV=production hides Developer Mode by default.
 streamlit run app.py
 ```
