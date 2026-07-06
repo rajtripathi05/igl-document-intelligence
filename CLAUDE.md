@@ -14,7 +14,35 @@ processor means adding a folder (or using the Admin panel).
 
 Long-term goal: SAP integration.
 
-## Current Status — Version 2.3
+## Current Status — Version 2.4
+
+V2.4 (Scale & Delight) adds, on top of V2.3:
+
+- **3D loading structures** — a pure-CSS 3D molecule (nucleus + three orbit
+  rings tilted into different 3D planes with orbiting electrons) is the
+  processing centrepiece; a negative `animation-delay` resumes the rotation
+  mid-cycle across Streamlit re-renders so it spins continuously. A reusable
+  `ui.loader_3d(...)` context manager replaces `st.spinner` for tabular
+  parsing, AI field location, and the stronger-model retry; a 3D document cube
+  (`ui.cube_3d_html`) is available for auxiliary waits.
+- **Scalable process catalog** — per-department keyword search (name, document
+  type, keywords, AI description), lifecycle filter pills, live-first ranking,
+  and a nine-card page with "Show all N processes" expansion; a persistent
+  **selected-process bar** keeps the active choice visible however the grid is
+  filtered. Designed to stay pleasant at 100+ processes.
+- **Document review at batch scale** — up to 8 documents render as tabs;
+  larger batches switch to status KPIs + a document picker.
+- **UX/logic fixes** — onboarding hero for the first-run empty state; dynamic
+  header version badge (`ui.APP_VERSION`) with live processor counts; the
+  upload hint reflects the selected process; duplicate-detection "Cancel" no
+  longer `st.stop()`s the rest of the page; PDF page counts for the cost
+  predictor are cached (`st.cache_data`); the cost dashboard gains ₹ bar
+  charts per processor / department / month.
+- **RA Posting (Marketing)** — first deterministic **tabular** processor
+  (`engine: "tabular"`): SBI/IDBI bank statements (Excel/CSV) are merged into a
+  customer-wise credit summary by the folder's `parser.py`, with no AI pipeline.
+
+## Version 2.3
 
 V2.3 (Enterprise AI Gateway & UX upgrade) adds, on top of everything below:
 a **provider-agnostic AI Gateway** (OpenRouter default; Gemini retained;

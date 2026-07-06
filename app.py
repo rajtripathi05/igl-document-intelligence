@@ -413,7 +413,7 @@ def _render_management_dashboard(nav: Nav) -> None:
 
 
 def _render_manual_mode(nav: Nav) -> bool:
-    """Manual mode: pick a business process via cards, then upload to it.
+    """Manual mode: pick a business process via the catalog, then upload to it.
 
     Returns True when a deterministic (tabular) processor handled the upload, so
     the caller can skip the AI register / per-document review sections.
@@ -429,6 +429,9 @@ def _render_manual_mode(nav: Nav) -> bool:
         p for p in processes
         if p.spec.status in (PRODUCTION, COMING_SOON) or nav.dev_mode
     ]
+    if not visible:
+        ui.coming_soon_hero(nav.department.name, "No processes available yet")
+        return False
 
     # Selection state is kept per department so switching departments is sticky.
     sel_key = f"proc_select:{nav.department.key}"
@@ -442,7 +445,7 @@ def _render_manual_mode(nav: Nav) -> bool:
         current = default_key
         st.session_state[sel_key] = current
 
-    _render_processor_cards(nav, visible, current, sel_key)
+    _render_process_catalog(nav, visible, current, sel_key)
 
     processor = next(p for p in visible if p.spec.use_case_key == current)
 
@@ -452,6 +455,15 @@ def _render_manual_mode(nav: Nav) -> bool:
             processor.spec.business_process or processor.spec.document_type,
         )
         return False
+
+    spec = processor.spec
+    ui.selected_process_bar(
+        name=spec.business_process or spec.document_type,
+        dept_name=spec.department_name or nav.department.name,
+        dept_key=spec.department_key or nav.department.key,
+        status=spec.status,
+        engine=spec.engine,
+    )
 
     # Deterministic Excel/CSV processors (e.g. RA Posting) have their own upload
     # + summary workspace and never touch the AI pipeline.
@@ -463,22 +475,110 @@ def _render_manual_mode(nav: Nav) -> bool:
     return False
 
 
-def _render_processor_cards(
+# ----- Process catalog (search / filter / paging — scales to 100+) ------ #
+
+#: Cards shown before the catalog collapses behind "Show all …".
+_CATALOG_PAGE = 9
+#: Display order + toolbar labels per lifecycle status.
+_STATUS_LABELS = {
+    PRODUCTION: "Live",
+    TESTING: "Testing",
+    DRAFT: "Draft",
+    COMING_SOON: "Coming Soon",
+}
+_STATUS_RANK = {PRODUCTION: 0, TESTING: 1, DRAFT: 2, COMING_SOON: 3}
+
+
+def _catalog_filter(
+    processors: list[BaseProcessor], query: str, status_label: str
+) -> list[BaseProcessor]:
+    """Filter + rank the catalog: text search, status filter, live first."""
+    query = query.strip().lower()
+    wanted_status = next(
+        (s for s, lbl in _STATUS_LABELS.items() if lbl == status_label), None
+    )
+
+    def matches(spec) -> bool:
+        if wanted_status and spec.status != wanted_status:
+            return False
+        if not query:
+            return True
+        haystack = " ".join(
+            [
+                spec.business_process or "",
+                spec.document_type or "",
+                spec.ai_description or "",
+                " ".join(spec.keywords),
+            ]
+        ).lower()
+        return all(term in haystack for term in query.split())
+
+    filtered = [p for p in processors if matches(p.spec)]
+    filtered.sort(
+        key=lambda p: (
+            _STATUS_RANK.get(p.spec.status, 9),
+            (p.spec.business_process or p.spec.document_type).lower(),
+        )
+    )
+    return filtered
+
+
+def _render_process_catalog(
     nav: Nav,
     processors: list[BaseProcessor],
     current_key: str,
     sel_key: str,
 ) -> None:
-    """Render premium selectable processor cards in a responsive grid.
+    """Render the searchable, filterable business-process catalog.
 
-    The card is a visual surface (icon, department, name, status, confidence,
-    hover glow); a slim companion button under each card performs the actual
-    selection, keeping selection simple and reliable across reruns.
+    Built to stay pleasant at 100+ processes per department: a keyword search
+    (name, document type, keywords, AI description), lifecycle filter pills,
+    live-first ranking, and a nine-card page with "Show all" expansion. The
+    active selection is always visible in the selected-process bar rendered by
+    the caller, even when filtered out of the grid.
     """
     ui.section_heading("🗂️ Select a Business Process")
+
+    col_search, col_filter = st.columns([3, 2], gap="medium")
+    with col_search:
+        query = st.text_input(
+            "Search processes",
+            key=f"cat_query:{nav.department.key}",
+            placeholder=f"Search {len(processors)} processes — name, keyword, description…",
+            label_visibility="collapsed",
+        )
+    statuses_present = {p.spec.status for p in processors}
+    options = ["All"] + [
+        lbl for s, lbl in _STATUS_LABELS.items() if s in statuses_present
+    ]
+    with col_filter:
+        status_label = (
+            st.pills(
+                "Status",
+                options,
+                default="All",
+                key=f"cat_status:{nav.department.key}",
+                label_visibility="collapsed",
+            )
+            or "All"
+        )
+
+    filtered = _catalog_filter(processors, query, status_label)
+    live = sum(1 for p in processors if p.spec.status == PRODUCTION)
+
+    if not filtered:
+        ui.catalog_meta(0, len(processors), live, query)
+        ui.catalog_empty(query or status_label)
+        return
+
+    all_key = f"cat_all:{nav.department.key}"
+    show_all = bool(st.session_state.get(all_key, False))
+    subset = filtered if show_all or len(filtered) <= _CATALOG_PAGE else filtered[:_CATALOG_PAGE]
+    ui.catalog_meta(len(subset), len(processors), live, query)
+
     per_row = 3
-    for start in range(0, len(processors), per_row):
-        row = processors[start : start + per_row]
+    for start in range(0, len(subset), per_row):
+        row = subset[start : start + per_row]
         cols = st.columns(per_row)
         for col, proc in zip(cols, row):
             spec = proc.spec
@@ -503,6 +603,16 @@ def _render_processor_cards(
                 ):
                     st.session_state[sel_key] = spec.use_case_key
                     st.rerun()
+
+    if len(filtered) > _CATALOG_PAGE:
+        label = (
+            "Show fewer processes"
+            if show_all
+            else f"Show all {len(filtered)} processes"
+        )
+        if st.button(label, key=f"cat_more:{nav.department.key}", use_container_width=True):
+            st.session_state[all_key] = not show_all
+            st.rerun()
 
 
 def _render_auto_mode(nav: Nav) -> None:
@@ -552,7 +662,10 @@ def _render_tabular_processor(nav: Nav, processor: BaseProcessor) -> None:
 
     if files and st.button("⚡ Generate Summary", type="primary", use_container_width=True):
         payload = [(f.name, f.getvalue()) for f in files]
-        with st.spinner("Parsing statements and building the customer summary…"):
+        with ui.loader_3d(
+            "Parsing statements…",
+            "Merging credit entries into the customer-wise summary",
+        ):
             try:
                 st.session_state[result_key] = processor.run_tabular(payload)
             except Exception as exc:  # noqa: BLE001 - surface a clean message
@@ -599,8 +712,8 @@ def _render_tabular_result(spec, result: dict) -> None:
 
 def _render_uploader_and_process(nav: Nav, processor: BaseProcessor | None) -> None:
     """Render the upload hint, uploader, cost predictor, duplicate check, process."""
-    _render_upload_hint()
     target = processor.spec.business_process if processor else f"{nav.department.name} documents"
+    _render_upload_hint(target if processor else None)
     uploaded_files = st.file_uploader(
         f"Upload documents for {target} (PDF or image)",
         type=_SUPPORTED_TYPES,
@@ -623,9 +736,12 @@ def _render_uploader_and_process(nav: Nav, processor: BaseProcessor | None) -> N
                 "⚠️ Continue Anyway", type="primary", use_container_width=True
             )
         with col_cancel:
+            # A plain no-op button: not processing IS the cancel. The rest of
+            # the page (registers, processed documents) keeps rendering.
             if st.button("Cancel", use_container_width=True):
-                st.info("Processing cancelled. Remove the file(s) above or continue anyway.")
-                st.stop()
+                st.info(
+                    "Processing cancelled. Remove the file(s) above or continue anyway."
+                )
         if proceed:
             _run_processing(nav, _build_doc_states(uploaded_files), processor)
         return
@@ -634,8 +750,13 @@ def _render_uploader_and_process(nav: Nav, processor: BaseProcessor | None) -> N
         _run_processing(nav, _build_doc_states(uploaded_files), processor)
 
 
+@st.cache_data(show_spinner=False, max_entries=256)
 def _page_count(file_bytes: bytes, mime_type: str) -> int:
-    """Cheaply count pages for the cost predictor (PDF page count; else 1)."""
+    """Cheaply count pages for the cost predictor (PDF page count; else 1).
+
+    Cached by content so re-runs (every widget interaction re-executes the
+    script) never re-open the same PDF just to count its pages.
+    """
     if mime_type == "application/pdf":
         try:
             import fitz  # PyMuPDF
@@ -756,28 +877,63 @@ def _doc_seconds(doc_id: str) -> float | None:
     return st.session_state.get("doc_times", {}).get(doc_id)
 
 
+#: Above this many documents, tabs overflow — switch to a picker.
+_MAX_DOC_TABS = 8
+
+
 def _render_documents() -> None:
-    """Render one tab per uploaded document, driven by the generic engine."""
+    """Render the per-document review area, driven by the generic engine.
+
+    Up to :data:`_MAX_DOC_TABS` documents render as tabs; larger batches switch
+    to a status summary + document picker so the navigation stays usable for
+    batches of any size.
+    """
     manager = _manager()
     docs = manager.documents
     if not docs:
-        st.info("Upload one or more documents and click **Process Documents**.")
+        ui.onboarding_hero()
         return
 
     ui.section_heading("📄 Documents")
-    labels = [f"{ui.status_icon(doc.status)} {doc.filename}" for doc in docs]
-    tabs = st.tabs(labels)
-    for tab, doc in zip(tabs, docs):
-        with tab:
-            _render_document_header(doc)
-            if doc.status == "unsupported":
-                st.error("Unsupported document type for this department.")
-            elif doc.status == "error":
-                st.error(f"Extraction failed: {doc.error}")
-            elif doc.status == "done":
-                render_document_workspace(doc)
-            else:
-                st.info("This document has not been processed yet.")
+
+    if len(docs) <= _MAX_DOC_TABS:
+        labels = [f"{ui.status_icon(doc.status)} {doc.filename}" for doc in docs]
+        tabs = st.tabs(labels)
+        for tab, doc in zip(tabs, docs):
+            with tab:
+                _render_document_body(doc)
+        return
+
+    # Large batch: status KPIs + a picker instead of an overflowing tab strip.
+    done = sum(1 for d in docs if d.status == "done")
+    errors = sum(1 for d in docs if d.status in ("error", "unsupported"))
+    ui.kpi_cards([
+        ("Documents", str(len(docs)), "in this batch"),
+        ("Processed", str(done), "ready for review"),
+        ("Attention", str(errors), "failed / unsupported"),
+    ])
+    choice = st.selectbox(
+        "Select a document to review",
+        options=range(len(docs)),
+        format_func=lambda i: (
+            f"{ui.status_icon(docs[i].status)} {docs[i].filename} · #{i + 1}"
+        ),
+        key="doc_picker",
+    )
+    _render_document_body(docs[choice])
+
+
+def _render_document_body(doc: DocumentState) -> None:
+    """Render one document's header + workspace/error content."""
+    _render_document_header(doc)
+    if doc.status == "unsupported":
+        st.error("Unsupported document type for this department.")
+    elif doc.status == "error":
+        st.error(f"Extraction failed: {doc.error}")
+    elif doc.status == "done":
+        render_document_workspace(doc)
+    else:
+        st.info("This document has not been processed yet.")
 
 
 def _render_document_header(doc: DocumentState) -> None:
@@ -878,18 +1034,21 @@ def _render_cost_health_view() -> None:
         )
     if summary["by_processor"]:
         st.caption("By processor")
+        _cost_breakdown_chart(summary["by_processor"], "Processor")
         st.dataframe(
             [{"Processor": k, **v} for k, v in summary["by_processor"].items()],
             use_container_width=True, hide_index=True,
         )
     if summary["by_department"]:
         st.caption("By department")
+        _cost_breakdown_chart(summary["by_department"], "Department")
         st.dataframe(
             [{"Department": k, **v} for k, v in summary["by_department"].items()],
             use_container_width=True, hide_index=True,
         )
     if summary["by_month"]:
         st.caption("By month")
+        _cost_breakdown_chart(summary["by_month"], "Month")
         st.dataframe(
             [{"Month": k, **v} for k, v in summary["by_month"].items()],
             use_container_width=True, hide_index=True,
@@ -897,6 +1056,20 @@ def _render_cost_health_view() -> None:
 
     ui.section_heading("❤️ Processor Health")
     _render_processor_health(summary["by_processor"])
+
+
+def _cost_breakdown_chart(breakdown: dict, label: str) -> None:
+    """Render a compact cost bar chart for one summary breakdown (₹ per key)."""
+    import pandas as pd
+
+    rows = [
+        {label: key, "Cost (₹)": float(usage.get("cost_inr", 0) or 0)}
+        for key, usage in breakdown.items()
+    ]
+    frame = pd.DataFrame(rows)
+    if frame.empty or not frame["Cost (₹)"].sum():
+        return
+    st.bar_chart(frame, x=label, y="Cost (₹)", height=220, color="#3B82F6")
 
 
 def _render_processor_health(by_processor: dict) -> None:
@@ -927,9 +1100,16 @@ def _render_processor_health(by_processor: dict) -> None:
 # ----- Shell ------------------------------------------------------------- #
 
 
-def _render_upload_hint() -> None:
-    """Render the premium, centered drag-and-drop hint above the uploader."""
-    types = ["Gate Passes", "Sales Orders", "Shipping Bills", "Scanned PDFs", "Images"]
+def _render_upload_hint(process_name: str | None = None) -> None:
+    """Render the premium, centered drag-and-drop hint above the uploader.
+
+    When a process is selected the chips describe what THIS process accepts,
+    instead of a hardcoded sample of other departments' document types.
+    """
+    if process_name:
+        types = [f"{process_name} PDFs", "Scanned Copies", "Photos", "Multi-page", "Handwriting"]
+    else:
+        types = ["PDFs", "Scanned Copies", "Photos", "Multi-page", "Handwriting"]
     chips = "".join(f"<span>{t}</span>" for t in types)
     st.markdown(
         f'<div class="igl-upload-hint">'
@@ -949,7 +1129,11 @@ def main() -> None:
         layout="wide",
     )
     ui.inject_theme()
-    ui.render_header(settings.assets_dir)
+    ui.render_header(
+        settings.assets_dir,
+        live_processors=len(active_processors()),
+        total_processes=len(all_processors()),
+    )
 
     nav = _render_sidebar()
 

@@ -185,7 +185,7 @@ def _ai_locate(doc: DocumentState, spec: ProcessorSpec, unlocated: list[str]) ->
         parts = [(pages[0], doc.mime_type)]
     labels = {f.path: f.label for f in _scalar_fields(spec)}
     values = {p: get_path(doc.data, p) for p in unlocated}
-    with st.spinner("Locating fields with AI…"):
+    with ui.loader_3d("Locating fields with AI…", "Finding bounding boxes on the document"):
         ai_boxes = field_locator.locate_with_ai(values, parts, sizes, labels=labels)
     merged = dict(st.session_state.get(f"loc:{doc.doc_id}", {}))
     merged.update(ai_boxes)
@@ -214,7 +214,10 @@ def _render_retry(doc: DocumentState) -> None:
         use_container_width=True,
         help="Re-runs extraction once on the RETRY model. Only replaces data if it succeeds.",
     ):
-        with st.spinner(f"Re-extracting with {ai_gateway.retry_model}…"):
+        with ui.loader_3d(
+            f"Re-extracting with {ai_gateway.retry_model}…",
+            "Stronger model · replaces data only on success",
+        ):
             retry_extract_document(doc)
         # Data may have changed — refresh locations and re-render.
         st.session_state.pop(f"loc:{doc.doc_id}", None)

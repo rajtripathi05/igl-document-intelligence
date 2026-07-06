@@ -11,8 +11,10 @@ dropped in without code changes.
 from __future__ import annotations
 
 import base64
+import html as html_lib
 import random
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import streamlit as st
@@ -41,6 +43,7 @@ TEXT_40 = "rgba(255,255,255,0.40)"
 COMPANY_NAME = "India Glycols Limited"
 PLATFORM_NAME = "Enterprise Document Intelligence Platform"
 TAGLINE = "AI-Powered · SAP-Ready Processing"
+APP_VERSION = "2.4"
 
 # Subtle, enterprise-friendly confidence colours (green / amber / red).
 CONFIDENCE_COLORS = {
@@ -201,6 +204,145 @@ _V23_CSS = """
 </style>
 """
 
+# ---------------------------------------------------------------------------
+# V2.4 styles — real 3D loading structures (CSS transforms, no JS), the
+# scalable process catalog (search / filter / show-more), the persistent
+# selected-process bar, and the first-run onboarding hero.
+# ---------------------------------------------------------------------------
+_V24_CSS = """
+<style>
+/* ---- 3D molecule (processing centrepiece) --------------------------- */
+/* A genuine 3D structure: a glowing nucleus orbited by three electron
+   rings tilted into different 3D planes, the whole assembly turning on a
+   perspective stage. Pure CSS transforms — no JavaScript, no canvas. */
+.igl-m3d-stage { perspective: 760px; width: 148px; height: 148px;
+    display:flex; align-items:center; justify-content:center; }
+.igl-m3d { --m3d: #3B82F6; --m3d-2: #22C55E;
+    position:relative; width:126px; height:126px;
+    transform-style: preserve-3d;
+    animation: igl-m3d-spin 16s linear infinite; }
+.igl-m3d .nucleus { position:absolute; inset:37%; border-radius:50%;
+    background: radial-gradient(circle at 32% 28%, #BFDBFE, var(--m3d) 52%, #0F4C95 100%);
+    box-shadow: 0 0 22px color-mix(in srgb, var(--m3d) 70%, transparent),
+                0 0 52px color-mix(in srgb, var(--m3d) 35%, transparent),
+                inset 0 0 10px rgba(255,255,255,0.35);
+    animation: igl-m3d-pulse 2.6s ease-in-out infinite; }
+.igl-m3d .orbit { position:absolute; inset:0; border-radius:50%;
+    border:1.5px solid color-mix(in srgb, var(--m3d) 46%, transparent);
+    transform-style: preserve-3d; }
+.igl-m3d .orbit .e { position:absolute; top:-5px; left:calc(50% - 5px);
+    width:10px; height:10px; border-radius:50%; background:#fff;
+    box-shadow: 0 0 8px var(--m3d), 0 0 20px color-mix(in srgb, var(--m3d) 75%, transparent); }
+.igl-m3d .orbit.o1 { animation: igl-m3d-o1 3.4s linear infinite; }
+.igl-m3d .orbit.o2 { border-color: color-mix(in srgb, var(--m3d-2) 42%, transparent);
+    animation: igl-m3d-o2 4.6s linear infinite; }
+.igl-m3d .orbit.o2 .e { box-shadow: 0 0 8px var(--m3d-2), 0 0 20px color-mix(in srgb, var(--m3d-2) 75%, transparent); }
+.igl-m3d .orbit.o3 { border-color: rgba(43,176,201,0.45);
+    animation: igl-m3d-o3 5.8s linear infinite; }
+.igl-m3d .orbit.o3 .e { box-shadow: 0 0 8px #2BB0C9, 0 0 20px rgba(43,176,201,0.75); }
+/* Each orbit keeps its tilted 3D plane while revolving about it, carrying
+   its electron around a true elliptical path. */
+@keyframes igl-m3d-spin { from { transform: rotateX(-16deg) rotateY(0deg); }
+                          to   { transform: rotateX(-16deg) rotateY(360deg); } }
+@keyframes igl-m3d-o1 { from { transform: rotateY(64deg) rotateZ(0deg); }
+                        to   { transform: rotateY(64deg) rotateZ(360deg); } }
+@keyframes igl-m3d-o2 { from { transform: rotateY(-58deg) rotateX(12deg) rotateZ(0deg); }
+                        to   { transform: rotateY(-58deg) rotateX(12deg) rotateZ(360deg); } }
+@keyframes igl-m3d-o3 { from { transform: rotateX(74deg) rotateZ(0deg); }
+                        to   { transform: rotateX(74deg) rotateZ(360deg); } }
+@keyframes igl-m3d-pulse { 0%,100% { filter: brightness(1); } 50% { filter: brightness(1.28); } }
+/* success state: the molecule settles into confident green */
+.igl-m3d.ok { --m3d: #22C55E; --m3d-2: #3B82F6; }
+
+/* ---- 3D document cube (standalone waits) ---------------------------- */
+.igl-cube-stage { perspective: 620px; width: 96px; height: 96px;
+    display:flex; align-items:center; justify-content:center; }
+.igl-cube { position:relative; width:58px; height:58px;
+    transform-style: preserve-3d; animation: igl-cube-spin 10s linear infinite; }
+.igl-cube .face { position:absolute; inset:0; display:flex; align-items:center;
+    justify-content:center; font-size:24px; border-radius:10px;
+    background: linear-gradient(160deg, rgba(59,130,246,0.16), rgba(59,130,246,0.05));
+    border:1px solid rgba(59,130,246,0.45);
+    box-shadow: inset 0 0 18px rgba(59,130,246,0.12); }
+.igl-cube .face.f1 { transform: translateZ(29px); }
+.igl-cube .face.f2 { transform: rotateY(180deg) translateZ(29px); }
+.igl-cube .face.f3 { transform: rotateY(90deg) translateZ(29px); }
+.igl-cube .face.f4 { transform: rotateY(-90deg) translateZ(29px); }
+.igl-cube .face.f5 { transform: rotateX(90deg) translateZ(29px); }
+.igl-cube .face.f6 { transform: rotateX(-90deg) translateZ(29px); }
+@keyframes igl-cube-spin { from { transform: rotateX(-22deg) rotateY(0deg); }
+                           to   { transform: rotateX(-22deg) rotateY(360deg); } }
+
+/* ---- Standalone 3D loader block ------------------------------------- */
+.igl-load3d { display:flex; flex-direction:column; align-items:center; gap:6px;
+    padding: 26px 20px; border-radius: var(--radius);
+    background: linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01));
+    border:1px solid rgba(255,255,255,0.08); box-shadow: var(--shadow-sm);
+    animation: igl-rise .4s ease both; margin: 8px 0 14px; }
+.igl-load3d .ttl { font-size:15px; font-weight:700; color:var(--text); margin-top:6px; }
+.igl-load3d .sub { font-size:12.5px; color:rgba(255,255,255,0.62); }
+
+/* ---- Process catalog toolbar / results ------------------------------ */
+.igl-cat-meta { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    font-size:12.5px; color:rgba(255,255,255,0.62); margin: 2px 2px 10px; }
+.igl-cat-meta b { color:#fff; }
+.igl-cat-chip { display:inline-flex; align-items:center; gap:6px; padding:3px 11px;
+    border-radius:999px; font-size:11.5px; font-weight:700;
+    background:rgba(59,130,246,0.13); color:#3B82F6; }
+.igl-cat-empty { text-align:center; padding: 34px 20px; border-radius: var(--radius);
+    border:1px dashed rgba(255,255,255,0.16); color:rgba(255,255,255,0.6);
+    background: rgba(255,255,255,0.02); margin-bottom: 12px; }
+.igl-cat-empty .glyph { font-size:34px; }
+.igl-cat-empty .ttl { font-size:15px; font-weight:700; color:#fff; margin-top:8px; }
+/* Streamlit pills (status filter) restyled to match the design system */
+button[kind="pills"], button[kind="pillsActive"] {
+    border-radius: 999px !important; font-weight:600 !important;
+    border:1px solid #22304A !important; background:#172235 !important;
+    color: rgba(255,255,255,0.80) !important; }
+button[kind="pillsActive"] {
+    background: linear-gradient(135deg, #1565C0, #3B82F6) !important;
+    border-color: transparent !important; color:#fff !important;
+    box-shadow: 0 6px 16px rgba(21,101,192,0.35) !important; }
+
+/* ---- Selected-process bar (persistent above the uploader) ----------- */
+.igl-selbar { --dept:#3B82F6; display:flex; align-items:center; gap:13px;
+    padding:13px 16px; border-radius: var(--radius-sm);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--dept) 14%, transparent), rgba(255,255,255,0.02));
+    border:1px solid color-mix(in srgb, var(--dept) 38%, transparent);
+    box-shadow: var(--shadow-sm), 0 0 22px color-mix(in srgb, var(--dept) 12%, transparent);
+    margin: 4px 0 14px; animation: igl-rise .4s ease both; }
+.igl-selbar .ico { width:38px; height:38px; border-radius:11px; flex-shrink:0;
+    display:flex; align-items:center; justify-content:center; font-size:19px;
+    background: color-mix(in srgb, var(--dept) 22%, transparent);
+    border:1px solid color-mix(in srgb, var(--dept) 36%, transparent); }
+.igl-selbar .k { font-size:10.5px; font-weight:700; letter-spacing:.08em;
+    text-transform:uppercase; color: var(--dept); }
+.igl-selbar .nm { font-size:15.5px; font-weight:800; color:#fff; line-height:1.15; }
+.igl-selbar .meta { margin-left:auto; display:flex; align-items:center; gap:10px; }
+
+/* ---- Onboarding hero (first-run empty state) ------------------------ */
+.igl-onboard { display:grid; grid-template-columns: repeat(auto-fit, minmax(210px,1fr));
+    gap:14px; margin: 10px 0 16px; }
+.igl-onboard .step { position:relative; padding:20px 18px 18px; border-radius: var(--radius);
+    background: linear-gradient(165deg, rgba(255,255,255,0.05), rgba(255,255,255,0.015));
+    border:1px solid rgba(255,255,255,0.09); box-shadow: var(--shadow-sm);
+    animation: igl-rise .5s ease both; }
+.igl-onboard .step:nth-child(2) { animation-delay:.08s; }
+.igl-onboard .step:nth-child(3) { animation-delay:.16s; }
+.igl-onboard .n { width:30px; height:30px; border-radius:999px; display:flex;
+    align-items:center; justify-content:center; font-size:13px; font-weight:800;
+    color:#fff; background: linear-gradient(135deg, #1565C0, #3B82F6);
+    box-shadow: 0 6px 14px rgba(21,101,192,0.4); margin-bottom:10px; }
+.igl-onboard .t { font-size:14.5px; font-weight:700; color:#fff; }
+.igl-onboard .d { font-size:12.5px; color:rgba(255,255,255,0.62); margin-top:4px; line-height:1.5; }
+
+/* respect reduced-motion for the new 3D structures */
+@media (prefers-reduced-motion: reduce) {
+    .igl-m3d, .igl-m3d .orbit, .igl-m3d .nucleus, .igl-cube { animation: none !important; }
+}
+</style>
+"""
+
 
 # ---------------------------------------------------------------------------
 # Global theme
@@ -209,6 +351,7 @@ def inject_theme() -> None:
     """Inject the global premium enterprise CSS (SAP Fiori × Apple HIG)."""
     st.markdown(_THEME_CSS, unsafe_allow_html=True)
     st.markdown(_V23_CSS, unsafe_allow_html=True)
+    st.markdown(_V24_CSS, unsafe_allow_html=True)
     # Decorative scientific lattice behind all content (pointer-events:none).
     # The molecular hex grid + particle cloud + company-identity motifs are all
     # painted by this layer at very low opacity; the floating SVG glyphs are a
@@ -839,27 +982,9 @@ section[data-testid="stSidebar"] .block-container {{ padding-top: 1.4rem; }}
 @keyframes igl-drift-c {{ from {{ transform: translate(0,0) rotate(0deg); }} to {{ transform: translate(6px,10px) rotate(5deg); }} }}
 
 /* ---- AI Core (processing centrepiece) ------------------------------- */
+/* The centrepiece itself is the V2.4 3D molecule (.igl-m3d); only the
+   wrapper layout and caption live here. */
 .igl-core-wrap {{ display:flex; flex-direction:column; align-items:center; gap:8px; }}
-.igl-core {{ position:relative; width:118px; height:118px; border-radius:50%;
-    display:flex; align-items:center; justify-content:center; }}
-.igl-core::before {{
-    content:""; position:absolute; inset:0; border-radius:50%;
-    background: conic-gradient(from 0deg, transparent 0 55%, {PRIMARY_LIGHT} 80%, {ACCENT} 95%, transparent 100%);
-    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 11px), #000 calc(100% - 10px));
-    mask: radial-gradient(farthest-side, transparent calc(100% - 11px), #000 calc(100% - 10px));
-    animation: igl-spin 2.8s linear infinite;
-}}
-.igl-core::after {{
-    content:""; position:absolute; inset:0; border-radius:50%;
-    border:2px solid rgba(255,255,255,0.06);
-}}
-.igl-core-orb {{
-    width:76px; height:76px; border-radius:50%; z-index:1;
-    display:flex; align-items:center; justify-content:center; font-size:30px;
-    background: radial-gradient(circle at 35% 30%, {PRIMARY_LIGHT}, {PRIMARY_DARK});
-    box-shadow: 0 0 28px rgba(59,130,246,0.5), inset 0 0 18px rgba(255,255,255,0.16);
-    animation: igl-core-pulse 2.4s ease-in-out infinite;
-}}
 .igl-core-cap {{ font-size:11px; font-weight:700; letter-spacing:.10em;
     text-transform:uppercase; color:{TEXT_70}; }}
 
@@ -919,10 +1044,6 @@ section[data-testid="stSidebar"] .block-container {{ padding-top: 1.4rem; }}
 .igl-tele .v {{ font-size:14px; font-weight:700; color:{TEXT}; margin-top:2px; }}
 
 /* success state */
-.igl-theater.done-all .igl-core-orb {{ animation:none;
-    background: radial-gradient(circle at 35% 30%, {ACCENT}, #15803D);
-    box-shadow:0 0 30px rgba(34,197,94,0.55), inset 0 0 18px rgba(255,255,255,0.18); }}
-.igl-theater.done-all .igl-core::before {{ background: conic-gradient(from 0deg, {ACCENT}, #16A34A, {ACCENT}); }}
 .igl-success {{ display:flex; align-items:center; gap:12px; }}
 .igl-success .ckring {{ width:54px; height:54px; border-radius:50%;
     display:flex; align-items:center; justify-content:center;
@@ -943,7 +1064,7 @@ section[data-testid="stSidebar"] .block-container {{ padding-top: 1.4rem; }}
 
 /* respect reduced-motion preferences */
 @media (prefers-reduced-motion: reduce) {{
-    .igl-molecular, .igl-molecular::after, .igl-core::before, .igl-core-orb,
+    .igl-molecular, .igl-molecular::after,
     .igl-theater-bar > div, .igl-confetti span,
     .igl-identity, .igl-float span, .igl-gw-keychip.to, .igl-gw-arrow,
     .igl-pcard-status.live .dot {{ animation: none !important; }}
@@ -1261,6 +1382,121 @@ def render_autofix_notes(notes: list[dict]) -> None:
             )
 
 
+def molecule_3d_html(elapsed: float = 0.0, success: bool = False, caption: str = "AI Core") -> str:
+    """Return the HTML for the 3D molecule structure (nucleus + orbit rings).
+
+    Args:
+        elapsed: Seconds since the animation logically began. Applied as a
+            negative ``animation-delay`` so the 3D rotation resumes mid-cycle
+            instead of restarting whenever Streamlit re-renders the HTML.
+        success: Switch the molecule to its green "complete" palette.
+        caption: Small caption under the structure.
+    """
+    delay = f"animation-delay:-{max(elapsed, 0.0):.2f}s;"
+    ok = " ok" if success else ""
+    return (
+        f'<div class="igl-core-wrap"><div class="igl-m3d-stage">'
+        f'<div class="igl-m3d{ok}" style="{delay}">'
+        f'<span class="nucleus"></span>'
+        f'<span class="orbit o1" style="{delay}"><span class="e"></span></span>'
+        f'<span class="orbit o2" style="{delay}"><span class="e"></span></span>'
+        f'<span class="orbit o3" style="{delay}"><span class="e"></span></span>'
+        f"</div></div>"
+        f'<div class="igl-core-cap">{caption}</div></div>'
+    )
+
+
+def cube_3d_html(faces: tuple[str, ...] = ("📄", "⚛️", "🧠", "📊", "✅", "📗")) -> str:
+    """Return the HTML for a rotating 3D document cube (six emoji faces)."""
+    face_html = "".join(
+        f'<div class="face f{i + 1}">{glyph}</div>' for i, glyph in enumerate(faces[:6])
+    )
+    return f'<div class="igl-cube-stage"><div class="igl-cube">{face_html}</div></div>'
+
+
+@contextmanager
+def loader_3d(title: str, sub: str = ""):
+    """Context manager showing a 3D molecule loader while its body runs.
+
+    A drop-in premium replacement for ``st.spinner`` — renders the animated 3D
+    structure with a title/subtitle into a placeholder, and always clears it
+    when the block exits (success or error)::
+
+        with ui.loader_3d("Parsing statements…", "Merging customer receipts"):
+            result = processor.run_tabular(payload)
+    """
+    placeholder = st.empty()
+    sub_html = f'<div class="sub">{sub}</div>' if sub else ""
+    placeholder.markdown(
+        f'<div class="igl-load3d">{molecule_3d_html(caption="Working")}'
+        f'<div class="ttl">{title}</div>{sub_html}</div>',
+        unsafe_allow_html=True,
+    )
+    try:
+        yield
+    finally:
+        placeholder.empty()
+
+
+def selected_process_bar(
+    *, name: str, dept_name: str, dept_key: str, status: str, engine: str = "ai"
+) -> None:
+    """Render the persistent "currently selected process" bar above the uploader.
+
+    Keeps the active selection visible even when the catalog grid is filtered,
+    collapsed, or scrolled away — essential once a department has dozens of
+    processes.
+    """
+    identity = department_identity(dept_key)
+    engine_label = "Deterministic · Excel/CSV" if engine == "tabular" else "AI Extraction"
+    st.markdown(
+        f'<div class="igl-selbar" style="--dept:{identity["color"]};">'
+        f'<div class="ico">{identity["icon"]}</div>'
+        f'<div><div class="k">{dept_name} · Selected Process</div>'
+        f'<div class="nm">{name}</div></div>'
+        f'<div class="meta"><span class="igl-cat-chip">{engine_label}</span>'
+        f"{lifecycle_chip(status)}</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def catalog_meta(shown: int, total: int, live: int, query: str = "") -> None:
+    """Render the result-count line under the catalog toolbar."""
+    query = html_lib.escape(query)
+    scope = f' for "<b>{query}</b>"' if query else ""
+    st.markdown(
+        f'<div class="igl-cat-meta">Showing <b>{shown}</b> of <b>{total}</b> '
+        f"processes{scope}<span class=\"igl-cat-chip\">● {live} live</span></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def catalog_empty(query: str) -> None:
+    """Render the empty state when a catalog search matches nothing."""
+    query = html_lib.escape(query)
+    st.markdown(
+        f'<div class="igl-cat-empty"><div class="glyph">🔍</div>'
+        f'<div class="ttl">No process matches "{query}"</div>'
+        f"<div>Try a shorter keyword, or clear the status filter.</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def onboarding_hero() -> None:
+    """Render the three-step onboarding strip shown before any document exists."""
+    steps = (
+        ("1", "Select a business process", "Pick the document type above — or use Auto Detect and let the AI route it."),
+        ("2", "Upload your documents", "Drop one or many PDFs / scans / photos. Handwriting and multi-page files are handled."),
+        ("3", "Review & export", "Check the confidence-scored fields, fix anything flagged, and download the Excel register."),
+    )
+    html = "".join(
+        f'<div class="step"><div class="n">{n}</div><div class="t">{t}</div>'
+        f'<div class="d">{d}</div></div>'
+        for n, t, d in steps
+    )
+    st.markdown(f'<div class="igl-onboard">{html}</div>', unsafe_allow_html=True)
+
+
 def coming_soon_hero(department_name: str, process_name: str) -> None:
     """Render a premium 'coming soon' hero for an unbuilt business process."""
     st.markdown(
@@ -1293,11 +1529,15 @@ def confidence_legend() -> None:
 # ---------------------------------------------------------------------------
 # Header & navigation
 # ---------------------------------------------------------------------------
-def render_header(assets_dir: Path) -> None:
+def render_header(
+    assets_dir: Path, *, live_processors: int | None = None, total_processes: int | None = None
+) -> None:
     """Render the branded India Glycols application header.
 
     Args:
         assets_dir: Directory to look for the corporate logo in.
+        live_processors: Optional count of live (production) processors.
+        total_processes: Optional count of all registered business processes.
     """
     logo_path = find_logo(assets_dir)
     if logo_path is not None:
@@ -1308,6 +1548,13 @@ def render_header(assets_dir: Path) -> None:
             'justify-content:center;color:#0F4C95;font-weight:900;font-size:22px;">IGL</div>'
         )
 
+    stats_tag = ""
+    if live_processors is not None and total_processes is not None:
+        stats_tag = (
+            f'<span class="igl-tag"><span class="dot"></span>'
+            f"{live_processors} live · {total_processes} processes</span>"
+        )
+
     st.markdown(
         f"""
         <div class="igl-header">
@@ -1316,8 +1563,8 @@ def render_header(assets_dir: Path) -> None:
                 <div class="igl-wordmark">India <span class="igl-accent">Glycols</span> Limited</div>
                 <div class="igl-sub">{PLATFORM_NAME}</div>
                 <div class="igl-head-badges">
-                    <span class="igl-tag">Version 2.0</span>
-                    <span class="igl-tag"><span class="dot"></span>Production Ready</span>
+                    <span class="igl-tag">Version {APP_VERSION}</span>
+                    {stats_tag}
                     <span class="igl-tag"><span class="dot"></span>AI Gateway Online</span>
                     <span class="igl-tag">{TAGLINE}</span>
                 </div>
@@ -1621,10 +1868,13 @@ class ProcessingTheater:
             extra = ""
             confetti = ""
             badge = ""
-        core = (
-            '<div class="igl-core-wrap"><div class="igl-core">'
-            '<div class="igl-core-orb">🧬</div></div>'
-            '<div class="igl-core-cap">AI Core</div></div>'
+        # 3D molecule centrepiece. The negative animation-delay makes the 3D
+        # rotation resume mid-cycle on every progress re-render, so the
+        # structure appears to spin continuously throughout the batch.
+        core = molecule_3d_html(
+            elapsed=time.perf_counter() - self.start,
+            success=success,
+            caption="Complete" if success else "AI Core",
         )
         html = (
             f'<div class="igl-theater {extra}">{confetti}'
