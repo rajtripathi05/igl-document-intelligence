@@ -1,0 +1,26 @@
+{
+  "manifest_version": "1.0",
+  "processor_version": "1.0",
+  "schema_version": "1.0",
+  "key": "ra_posting",
+  "document_type": "RA Posting",
+  "business_process": "RA Posting",
+  "status": "production",
+  "engine": "tabular",
+  "accuracy": 100,
+  "json_suffix": "ra_posting",
+  "department": { "key": "marketing", "name": "Marketing", "icon": "📣", "order": 2 },
+  "keywords": [
+    "ra posting",
+    "bank statement",
+    "customer receipts",
+    "neft",
+    "rtgs",
+    "imps",
+    "credit",
+    "sbi",
+    "idbi"
+  ],
+  "ai_description": "A bank statement (SBI or IDBI) uploaded as Excel or CSV. Produces a merged, customer-wise summary of CREDIT (CR) receipts — grouped A-Z with per-customer subtotals and a grand total.",
+  "input_formats": ["xlsx", "xls", "csv"]
+}

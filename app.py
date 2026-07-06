@@ -254,7 +254,10 @@ def _run_processing(
     candidates = None
     if processor is None:
         classifier = build_classifier()
-        candidates = production_processors_for_department(nav.department.key) or active_processors()
+        candidates = [
+            p for p in (production_processors_for_department(nav.department.key) or active_processors())
+            if p.spec.engine != "tabular"
+        ]
 
     config.ai_gateway.set_queue(len(docs))
     process_batch(
@@ -296,15 +299,19 @@ def _render_process_view(nav: Nav) -> None:
         _render_management_dashboard(nav)
         return
 
+    handled_tabular = False
     if nav.mode == _MODE_MANUAL:
         ui.render_breadcrumb(nav.department.name, "Manual · select business process")
-        _render_manual_mode(nav)
+        handled_tabular = _render_manual_mode(nav)
     else:
         ui.render_breadcrumb(nav.department.name, "Auto Detect · AI picks the process")
         _render_auto_mode(nav)
 
-    _render_register_downloads(nav)
-    _render_documents()
+    # Tabular processors render their own summary + download; skip the AI-only
+    # register and per-document review sections for them.
+    if not handled_tabular:
+        _render_register_downloads(nav)
+        _render_documents()
 
 
 def _render_management_dashboard(nav: Nav) -> None:
@@ -405,12 +412,16 @@ def _render_management_dashboard(nav: Nav) -> None:
     )
 
 
-def _render_manual_mode(nav: Nav) -> None:
-    """Manual mode: pick a business process via cards, then upload to it."""
+def _render_manual_mode(nav: Nav) -> bool:
+    """Manual mode: pick a business process via cards, then upload to it.
+
+    Returns True when a deterministic (tabular) processor handled the upload, so
+    the caller can skip the AI register / per-document review sections.
+    """
     processes = business_processes_for_department(nav.department.key)
     if not processes:
         ui.coming_soon_hero(nav.department.name, "No processes configured yet")
-        return
+        return False
 
     # Visible processes: business users see production + coming_soon; developers
     # additionally see testing/draft.
@@ -440,9 +451,16 @@ def _render_manual_mode(nav: Nav) -> None:
             nav.department.name,
             processor.spec.business_process or processor.spec.document_type,
         )
-        return
+        return False
+
+    # Deterministic Excel/CSV processors (e.g. RA Posting) have their own upload
+    # + summary workspace and never touch the AI pipeline.
+    if processor.spec.engine == "tabular":
+        _render_tabular_processor(nav, processor)
+        return True
 
     _render_uploader_and_process(nav, processor)
+    return False
 
 
 def _render_processor_cards(
@@ -489,7 +507,10 @@ def _render_processor_cards(
 
 def _render_auto_mode(nav: Nav) -> None:
     """Auto Detect mode: upload, then classify among production processors."""
-    candidates = production_processors_for_department(nav.department.key)
+    candidates = [
+        p for p in production_processors_for_department(nav.department.key)
+        if p.spec.engine != "tabular"
+    ]
     if not candidates:
         st.info(
             f"No live processors in **{nav.department.name}** yet. Switch "
@@ -500,6 +521,80 @@ def _render_auto_mode(nav: Nav) -> None:
     names = ", ".join(p.spec.business_process or p.spec.document_type for p in candidates) or "—"
     st.caption(f"📑 Auto-detecting among: {names}")
     _render_uploader_and_process(nav, processor=None)
+
+
+# ----- Tabular (deterministic Excel/CSV) workspace ---------------------- #
+
+
+def _render_tabular_processor(nav: Nav, processor: BaseProcessor) -> None:
+    """Deterministic Excel/CSV workspace (e.g. RA Posting) — no AI pipeline.
+
+    Uploads are parsed by the processor's own ``parser.py`` into a merged
+    customer summary that is previewed and offered as an Excel download.
+    """
+    spec = processor.spec
+    title = spec.business_process or spec.document_type
+    ui.section_heading(f"📥 {title}")
+    st.caption(
+        "Upload SBI or IDBI bank statements (Excel or CSV). Only credit (CR) "
+        "entries are kept and merged into a customer-wise summary — grouped A–Z "
+        "with per-customer subtotals and a grand total."
+    )
+
+    result_key = f"tabular_result:{spec.use_case_key}"
+    files = st.file_uploader(
+        f"Upload statements for {title}",
+        type=["xlsx", "xls", "xlsb", "csv"],
+        accept_multiple_files=True,
+        label_visibility="collapsed",
+        key=f"tabular_upload:{spec.use_case_key}",
+    )
+
+    if files and st.button("⚡ Generate Summary", type="primary", use_container_width=True):
+        payload = [(f.name, f.getvalue()) for f in files]
+        with st.spinner("Parsing statements and building the customer summary…"):
+            try:
+                st.session_state[result_key] = processor.run_tabular(payload)
+            except Exception as exc:  # noqa: BLE001 - surface a clean message
+                logger.exception("Tabular processing failed for %s", spec.use_case_key)
+                st.error(f"Could not build the summary: {exc}")
+                st.session_state.pop(result_key, None)
+
+    result = st.session_state.get(result_key)
+    if result:
+        _render_tabular_result(spec, result)
+
+
+def _render_tabular_result(spec, result: dict) -> None:
+    """Render stats, warnings, a preview table, and the Excel download."""
+    stats = result.get("stats", {})
+    cols = st.columns(4)
+    cols[0].metric("Files", stats.get("files", 0))
+    cols[1].metric("Credit entries", stats.get("credit_entries", 0))
+    cols[2].metric("Customers", stats.get("customers", 0))
+    cols[3].metric("Total (₹)", f"{stats.get('total_amount', 0):,.2f}")
+
+    banks = ", ".join(stats.get("banks", [])) or "—"
+    naming = "AI-cleaned names" if stats.get("ai_used") else "rule-based names"
+    st.caption(f"Detected bank(s): **{banks}** · Customer names: **{naming}**")
+
+    for warning in result.get("warnings", []):
+        st.warning(warning)
+
+    rows = result.get("rows", [])
+    if not rows:
+        st.info("No credit (CR) entries were found in the uploaded file(s).")
+        return
+
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+    st.download_button(
+        "⬇️ Download Customer Summary (Excel)",
+        data=result.get("excel_bytes", b""),
+        file_name=f"{spec.json_suffix or spec.use_case_key}_summary.xlsx",
+        mime=_EXCEL_MIME,
+        type="primary",
+        use_container_width=True,
+    )
 
 
 def _render_uploader_and_process(nav: Nav, processor: BaseProcessor | None) -> None:

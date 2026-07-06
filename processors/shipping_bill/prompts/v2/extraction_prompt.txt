@@ -106,6 +106,12 @@ below (field → owning section → JSON target).
   Labels: "HS CODE", "HS CD", "HSN", "HS No.", "TARIFF CODE", "CTH",
   "CUSTOMS TARIFF HEADING", "CHAPTER HEADING". Extract exactly as printed
   (8-digit code, e.g. "29094100"). Do not normalize or truncate.
+• Description → items[].product_description
+  In the "D. ITEM DETAILS" table the columns are numbered
+  1.ItemSNo | 2.HS CD | 3.DESCRIPTION | 4.QUANTITY | 5.UQC | 6.RATE | 7.VALUE(F/C).
+  "3.DESCRIPTION" is the full goods description — grade/spec plus batch/lot
+  numbers and DOM/DOE dates (e.g. "NICOTINE EP B NO-M062600071 & M062600074
+  DOM-JUNE-2026 DOE-NOV-2027"). Capture the COMPLETE multi-line text verbatim.
 • Quantity  → items[].quantity
 • UOM (UQC) → items[].unit
 • Rate      → items[].unit_price

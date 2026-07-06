@@ -165,6 +165,10 @@ class ProcessorSpec:
     department_order: int = 100
     export: ExportSpec | None = None
     prompt_version: str = "v1"
+    # Processing engine: "ai" (default) routes uploads through OCR + AI
+    # extraction; "tabular" marks a deterministic Excel/CSV processor whose logic
+    # lives in the folder's ``parser.py`` (no AI pipeline / no PDF preprocessing).
+    engine: str = "ai"
     manifest_version: str = "1.0"
     processor_version: str = "1.0"
     schema_version: str = "1.0"
@@ -284,6 +288,7 @@ class ProcessorSpec:
             department_order=int(department.get("order", 100)),
             export=export,
             prompt_version=manifest.get("prompt_version", "v1"),
+            engine=str(manifest.get("engine", "ai")).strip().lower() or "ai",
             manifest_version=str(manifest.get("manifest_version", "1.0")),
             processor_version=str(manifest.get("processor_version", "1.0")),
             schema_version=str(manifest.get("schema_version", "1.0")),

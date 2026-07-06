@@ -125,6 +125,65 @@ class FolderProcessor(BaseProcessor):
             return module.build_excel_bytes(data)
         return generic_exporter.build_excel_bytes(data, self._spec)
 
+    # ----- Tabular (deterministic Excel/CSV) engine ----------------------- #
+
+    def run_tabular(self, files: list[tuple[str, bytes]]) -> dict[str, Any]:
+        """Run this processor's deterministic tabular engine over uploaded files.
+
+        Only valid for processors whose manifest declares ``"engine": "tabular"``.
+        Loads the folder's ``parser.py`` (which must expose ``run(files,
+        ai_gateway=...)``) and returns its result dict. The shared AI gateway is
+        passed through so the parser can optionally use AI (e.g. name cleanup);
+        no OCR/PDF preprocessing and no extraction pipeline are involved.
+
+        Args:
+            files: ``(filename, raw_bytes)`` for each uploaded Excel/CSV file.
+
+        Returns:
+            The parser's result dict (columns/rows/excel_bytes/warnings/stats).
+
+        Raises:
+            RuntimeError: If the folder has no usable ``parser.py`` with ``run``.
+        """
+        module = self._load_folder_module("parser")
+        if module is None or not callable(getattr(module, "run", None)):
+            raise RuntimeError(
+                f"Processor '{self._spec.use_case_key}' declares engine='tabular' "
+                "but has no parser.py exposing run(files, ai_gateway=...)."
+            )
+        return dict(module.run(files, ai_gateway=ai_gateway))
+
+    def _load_folder_module(self, name: str) -> ModuleType | None:
+        """Import ``<folder>/<name>.py`` by file path (no export gate), cached.
+
+        Unlike :meth:`_optional_module`, this loads any module regardless of the
+        symbols it exposes — used for the tabular ``parser.py`` engine.
+        """
+        cache_key = f"__raw__{name}"
+        if cache_key in self._module_cache:
+            return self._module_cache[cache_key]
+
+        path = self._folder / f"{name}.py"
+        module: ModuleType | None = None
+        if path.is_file():
+            try:
+                spec = importlib.util.spec_from_file_location(
+                    f"processors._loaded.{self._spec.use_case_key}.{name}", path
+                )
+                if spec and spec.loader:
+                    candidate = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(candidate)
+                    module = candidate
+            except Exception:  # noqa: BLE001 - never break the app on a bad plugin
+                logger.exception(
+                    "Failed loading %s.py for processor '%s'.",
+                    name,
+                    self._spec.use_case_key,
+                )
+
+        self._module_cache[cache_key] = module
+        return module
+
     # ----- Optional module loading ---------------------------------------- #
 
     def _optional_module(self, name: str) -> ModuleType | None:

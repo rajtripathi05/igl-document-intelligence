@@ -4,6 +4,11 @@ httpx
 python-dotenv
 pandas
 openpyxl
+# Readers for the RA Posting tabular processor's bank statements:
+#   pyxlsb -> Excel Binary Workbook (.xlsb); xlrd -> legacy Excel (.xls).
+#   .xlsx is read via openpyxl and .csv natively.
+pyxlsb
+xlrd
 Pillow
 PyMuPDF
 # Optional: enables OCR deskew + denoise in preprocess.py. The app degrades
