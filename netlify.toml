@@ -5,21 +5,20 @@
 # static landing page (the front door). The actual app must run on a Python host
 # (Streamlit Community Cloud or Render — see DEPLOYMENT.md).
 #
-# Deploy the front door:
-#   npm i -g netlify-cli && netlify deploy --prod
-# then rename the site to "indiaglycolsai" (→ https://indiaglycolsai.netlify.app).
+# `base` isolates Netlify to the static folder so it does NOT try to pip-install
+# the Python app (which would fail the Netlify build). Everything below is
+# relative to that base directory.
 
 [build]
-  publish = "deploy/netlify-landing"
+  base = "deploy/netlify-landing"
+  publish = "."
   command = ""
 
-[build.environment]
-  NODE_VERSION = "18"
-
-# OPTIONAL — make the Netlify URL forward straight to the running app. After you
-# deploy the app (e.g. https://indiaglycolsai.streamlit.app), uncomment this and
-# set `to`, then redeploy. (A plain redirect, because Netlify cannot proxy
-# Streamlit's WebSocket connection.)
+# OPTIONAL — make https://indiaglycolsai.netlify.app forward straight to the
+# running app. After you deploy the app (e.g. https://indiaglycolsai.streamlit.app
+# on Streamlit Cloud, or the Render URL), uncomment this and set `to`, commit,
+# and Netlify redeploys. A plain 302 redirect, because Netlify cannot proxy
+# Streamlit's live WebSocket connection.
 # [[redirects]]
 #   from = "/*"
 #   to = "https://indiaglycolsai.streamlit.app"
