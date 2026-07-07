@@ -378,13 +378,13 @@ def resolve_export_value(
                 except (TypeError, ValueError):
                     continue
             return total
-        if column.agg == "join":
+        if column.agg in ("join", "join_lines"):
             seen: list[str] = []
             for value in values:
                 text = str(value)
                 if text not in seen:
                     seen.append(text)
-            return ", ".join(seen)
+            return ("\n" if column.agg == "join_lines" else ", ").join(seen)
         return values[0]
 
     return get_path(data, path)

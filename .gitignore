@@ -1,4 +1,5 @@
 .env
+.env.*
 __pycache__/
 *.pyc
 outputs/
@@ -6,3 +7,5 @@ outputs/
 .venv/
 .vscode/
 .idea/
+_preview/
+health.txt

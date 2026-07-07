@@ -43,10 +43,11 @@ DEPARTMENTS: list[Department] = [
     Department("supply_chain", "Supply Chain", "🚚", 5),
     Department("hr", "Human Resources", "👥", 6),
     Department("operations", "Operations", "⚙️", 7),
-    Department("mechanical", "Mechanical", "🔧", 8),
-    Department("chemical", "Chemical", "🧪", 9),
-    Department("production", "Production", "🏭", 10),
-    Department("management", "Management", "📊", 11),
+    Department("plant_operations", "Plant Operations", "🏭", 8),
+    Department("mechanical", "Mechanical", "🔧", 9),
+    Department("chemical", "Chemical", "🧪", 10),
+    Department("production", "Production", "🏭", 11),
+    Department("management", "Management", "📊", 12),
 ]
 
 

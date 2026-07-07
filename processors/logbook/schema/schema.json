@@ -1,0 +1,62 @@
+{
+  "page_type": null,
+  "form_type": null,
+  "reactor": null,
+  "date": null,
+  "batch_no": null,
+  "product_name": null,
+  "printed_product_struck": null,
+  "previous_reactor_line": null,
+  "raw_materials": [
+    {
+      "slot": null,
+      "name": null,
+      "recipe_qty": null,
+      "actual_qty": null,
+      "start": null,
+      "finish": null,
+      "pr_vacc": null,
+      "temp": null,
+      "remarks": null
+    }
+  ],
+  "process_steps": {
+    "inertization": { "start": null, "finish": null },
+    "dehydration": { "start": null, "finish": null },
+    "reaction_eo": { "start": null, "finish": null },
+    "reaction_po": { "start": null, "finish": null },
+    "cooking": { "start": null, "finish": null },
+    "stripping": { "start": null, "finish": null },
+    "cooling": { "start": null, "finish": null },
+    "unloading": { "start": null, "finish": null }
+  },
+  "qc_analysis": [
+    { "time": null, "parameter": null, "result": null }
+  ],
+  "complete_analysis": [
+    { "parameter": null, "specs": null, "result": null }
+  ],
+  "unloading_details": {
+    "tank_no": null,
+    "tank_initial": null,
+    "tank_final": null,
+    "no_of_barrels_ibc": null,
+    "total_filled_kg": null,
+    "packing_breakup": null
+  },
+  "shift_incharge_name": null,
+  "shift_incharge_sign": null,
+  "panel_incharge": null,
+  "remarks_text": null,
+  "join_keys": {
+    "date": null,
+    "product_hint": null,
+    "batch_hint": null,
+    "la_charge_start": null,
+    "unloading_start": null,
+    "unloading_finish": null,
+    "total_filled_kg": null
+  },
+  "extra_fields": {},
+  "page_notes": null
+}

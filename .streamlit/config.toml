@@ -1,0 +1,15 @@
+# Streamlit server + theme config (used by all hosts: local, Streamlit Cloud,
+# Render, Docker). Secrets are NOT stored here — set AI_API_KEY etc. as
+# environment variables / host secrets (see DEPLOYMENT.md).
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = true
+maxUploadSize = 2048          # allow large multi-image log-book uploads (MB)
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#1F4E78"
+base = "light"

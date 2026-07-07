@@ -1,0 +1,20 @@
+# One-click deploy blueprint for Render.com (runs the real Streamlit app).
+# In Render: New + > Blueprint > point at this repo. Set the secret env vars in
+# the dashboard (they are marked sync:false so they are NOT stored in git).
+services:
+  - type: web
+    name: indiaglycolsai
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter          # Streamlit needs an always-on instance (not free tier sleep)
+    envVars:
+      - key: AI_PROVIDER
+        value: openrouter
+      - key: DEFAULT_MODEL
+        value: google/gemini-2.5-flash
+      - key: RETRY_MODEL
+        value: google/gemini-2.5-pro
+      - key: AI_API_KEY
+        sync: false        # set this in the Render dashboard (secret)
+      - key: APP_ENV
+        value: production

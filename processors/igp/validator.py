@@ -10,11 +10,58 @@ with a confidence score.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from processors.generic_validator import coerce_number, normalize_date
 
 logger = logging.getLogger(__name__)
+
+
+def _dedup_multiline_value(text: str) -> str:
+    """Collapse a newline-joined multi-value string, dropping duplicate lines.
+
+    Lines equal after case/space/punctuation folding are treated as identical
+    (the first spelling is kept). Blank lines are removed. Order is preserved.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for raw in str(text).split("\n"):
+        line = raw.strip()
+        if not line:
+            continue
+        key = re.sub(r"[^a-z0-9]", "", line.lower())
+        if key and key in seen:
+            continue
+        seen.add(key)
+        out.append(line)
+    # Drop any line that is a folded-substring of another kept line — handles a
+    # truncated re-read (e.g. "KSC-629/2" vs "KSC-629/26-27" keeps the longer).
+    folds = [re.sub(r"[^a-z0-9]", "", ln.lower()) for ln in out]
+    kept = [
+        ln for i, ln in enumerate(out)
+        if not (folds[i] and any(
+            i != j and folds[i] != folds[j] and folds[i] in folds[j]
+            for j in range(len(out))
+        ))
+    ]
+    return "\n".join(kept)
+
+
+def _dedup_walk(node: Any, notes: list[dict[str, Any]], path: str) -> Any:
+    """Recursively dedup every multi-line string leaf in the document."""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            node[key] = _dedup_walk(value, notes, f"{path}.{key}" if path else key)
+        return node
+    if isinstance(node, list):
+        return [_dedup_walk(v, notes, f"{path}[{i}]") for i, v in enumerate(node)]
+    if isinstance(node, str) and "\n" in node:
+        new = _dedup_multiline_value(node)
+        if new != node:
+            notes.append(_note(path, node, new, "Removed duplicate lines in multi-value field.", 100))
+        return new
+    return node
 
 #: Date fields (dotted paths) normalized to ISO during auto-fix.
 _DATE_PATHS = (
@@ -42,6 +89,10 @@ def auto_fix(data: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]
         A ``(data, notes)`` tuple.
     """
     notes: list[dict[str, Any]] = []
+
+    # Dedup multi-value (newline-joined) fields first, so a field like
+    # "UK18CA6736\nUK18CA6736" collapses to one line regardless of the model.
+    data = _dedup_walk(data, notes, "")
 
     for section, key in _DATE_PATHS:
         block = data.get(section)

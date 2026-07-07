@@ -102,10 +102,10 @@
     ]
   },
   "export": {
-    "template": "templates/tsmp (2).XLSX",
+    "template": "templates/igp_data_format.xlsx",
     "sheet": "Data",
-    "header_row": 3,
-    "start_row": 4,
+    "header_row": 1,
+    "start_row": 2,
     "columns": [
       { "header": "PO NO", "path": "purchase_order.po_number" },
       { "header": "PO DATE", "path": "purchase_order.po_date" },
@@ -115,8 +115,8 @@
       { "header": "Entry time", "path": "gate_pass.entry_time" },
       { "header": "VENDOR Code", "path": "vendor.code" },
       { "header": "VENDOR NAME", "path": "vendor.name" },
-      { "header": "MATERIAL NO.", "path": "items.material_number", "agg": "first" },
-      { "header": "MATERIAL DESC.", "path": "items.material_description", "agg": "first" },
+      { "header": "MATERIAL NO.", "path": "items.material_number", "agg": "join_lines" },
+      { "header": "MATERIAL DESC.", "path": "items.material_description", "agg": "join_lines" },
       { "header": "UNIT", "path": "items.unit", "agg": "first" },
       { "header": "QUANTITY", "path": "items.quantity", "agg": "sum" },
       { "header": "Delivery Note", "path": "delivery.delivery_note" },

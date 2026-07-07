@@ -153,6 +153,68 @@ class FolderProcessor(BaseProcessor):
             )
         return dict(module.run(files, ai_gateway=ai_gateway))
 
+    # ----- Log Book (multi-image -> one row per batch) engine ------------- #
+
+    def run_logbook(
+        self,
+        files: list[tuple[str, bytes]],
+        *,
+        groups: dict[str, str] | None = None,
+        progress: Any = None,
+    ) -> dict[str, Any]:
+        """Run this processor's log-book engine over uploaded page images.
+
+        Only valid for processors whose manifest declares ``"engine": "logbook"``.
+        Loads the folder's ``logbook_engine.py`` (which exposes
+        ``run(files, *, client, spec, groups, progress, ...)``) and passes a
+        client bound to this processor's own prompts + schema. Each page image is
+        read individually via the shared AI gateway, then pages are assembled into
+        one combined Excel register — one row per batch. No OCR/PDF per-document
+        pipeline and no classification are involved.
+
+        Args:
+            files: ``(filename, raw_bytes)`` for each uploaded page image/PDF.
+            groups: Optional ``{filename: product_hint}`` to aid pairing.
+            progress: Optional ``progress(done, total, filename)`` callback.
+
+        Returns:
+            The engine's result dict (columns/rows/records/excel_bytes/stats/warnings).
+
+        Raises:
+            RuntimeError: If the folder has no usable ``logbook_engine.py``.
+        """
+        module = self._load_folder_module("logbook_engine")
+        if module is None or not callable(getattr(module, "run", None)):
+            raise RuntimeError(
+                f"Processor '{self._spec.use_case_key}' declares engine='logbook' "
+                "but has no logbook_engine.py exposing run(files, *, client, ...)."
+            )
+        return dict(
+            module.run(
+                files,
+                client=self.build_client(),
+                spec=self._spec,
+                groups=groups,
+                progress=progress,
+            )
+        )
+
+    def rebuild_logbook(
+        self, column_defs: list[dict[str, str]], rows: list[dict[str, Any]]
+    ) -> bytes:
+        """Rebuild the styled log-book register from (edited) display rows.
+
+        Lets the reviewer's inline edits flow back into the downloadable
+        register. Delegates to the folder's ``logbook_engine.build_workbook_from_display``.
+        """
+        module = self._load_folder_module("logbook_engine")
+        if module is None or not callable(getattr(module, "build_workbook_from_display", None)):
+            raise RuntimeError(
+                f"Processor '{self._spec.use_case_key}' has no logbook_engine.py "
+                "exposing build_workbook_from_display(column_defs, rows)."
+            )
+        return module.build_workbook_from_display(column_defs, rows)
+
     def _load_folder_module(self, name: str) -> ModuleType | None:
         """Import ``<folder>/<name>.py`` by file path (no export gate), cached.
 

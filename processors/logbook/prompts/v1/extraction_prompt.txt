@@ -1,0 +1,97 @@
+Extract the contents of THIS ONE log-book page into the JSON schema.
+
+STEP 1 — CLASSIFY THE PAGE.
+Set "page_type" to exactly one of:
+- "reactor_main"  : the printed grid form titled "... STIRRED REACTOR LOG BOOK"
+                    (has Raw Material / Recipe Qty / Actual Qty / Start / Finish
+                    columns and Inertization, Dehydration, Reaction Eo/Po, Cooking,
+                    Stripping, Cooling, Unloading rows).
+- "blending_main" : the printed grid form titled "GENERAL BATCH CARD FOR
+                    BLENDING/FORMULATED/REACTION" (has Reactor Charging Details,
+                    In Process Analysis, RM for Parameter Adjustment, Final
+                    Analytical Results, Unloading Details with Shift A/B/C).
+- "remarks"       : a lined page (little/no printed grid) headed "Shift Process
+                    Activities" or otherwise filled almost entirely with a
+                    handwritten narrative of what each shift did.
+- "unknown"       : anything else.
+Also set "form_type" to "stirred_reactor_log_book", "blending_batch_card", or
+"other".
+
+STEP 2 — HEADER (main pages).
+- "reactor": the reactor id (e.g. "R-850", "A-601"). If the printed reactor no is
+  overwritten by hand, use the handwritten one.
+- "date": the batch date exactly as written (e.g. "10/06/26", "11.6.26").
+- "batch_no": the Batch No. (e.g. "NS2606060317"). Read every digit carefully.
+- PRODUCT NAME — IMPORTANT: the pre-printed "PRODUCT NAME : ORCA-B" is frequently
+  STRUCK THROUGH and the REAL product for this batch is HANDWRITTEN over/next to it
+  and again in the table's "Product Name" cell (e.g. "ECARE 243", "MEA",
+  "ASPIRO 8560 PE"). Put the HANDWRITTEN real product in "product_name". Put the
+  struck-through printed text (e.g. "ORCA-B") in "printed_product_struck".
+- "previous_reactor_line": any value written for "Previous Reactor / Line Status".
+
+STEP 3 — RAW MATERIALS (main pages).
+For every used row of the raw-material / charging table return an object in
+"raw_materials":
+- "slot": the printed row number (1..8) if visible, else null.
+- "name": the material name as written (e.g. "LA" / "L.A." / "Lauryl Alcohol",
+  "KOH", "EO" / "E.O.", "A.Acid", "DM Water", "PO", "Ammonia Sol", "ENLITE 275T",
+  "Soyabean oil", "MEOH", "HCL").
+- "recipe_qty": Recipe Qty Kg (number) — for the blending card this is
+  "Recipe Value (Kg)".
+- "actual_qty": Actual Qty Kg (number) — for the blending card this is
+  "Actual Value (Kg)". If only one quantity is written, put it in actual_qty.
+- "start"/"finish": charging start/finish time if the row has them.
+- "pr_vacc"/"temp"/"remarks": Pr./Vacc., Temp., and the row Remarks if present.
+Skip fully blank rows.
+
+STEP 4 — PROCESS STEPS (reactor_main).
+Fill "process_steps" start/finish times (as written) for: inertization,
+dehydration, reaction_eo, reaction_po, cooking, stripping, cooling, unloading.
+A tick/✓ means the step happened; an "X" or dashes mean it did not (leave null).
+For the blending card, map its charging/reaction timings into the nearest steps
+when clear, else leave null and keep detail in "extra_fields".
+
+STEP 5 — QC ANALYSIS (in-process).
+Each written row of "QC Analysis In Process" (Time / Parameter / QC Result), or
+"In Process Analysis" on the blending card, becomes one object in "qc_analysis"
+with "time", "parameter", "result". Include ALL rows, in order.
+
+STEP 6 — COMPLETE ANALYSIS / SPECIFICATION.
+Each row of "Complete Analysis : Specification" (or "Final Analytical Results")
+becomes one object in "complete_analysis" with "parameter", "specs" (the spec
+range/limit if printed, e.g. "5.5-7.5", "10 max") and "result" (the handwritten
+result, keep notation like "<10 ppm").
+For "parameter", use the STANDARD name even when the handwriting is messy — map to
+one of: App, Moisture, APHA, CP, OH, Free EO, 1,4 Dioxane, PEG, pH, Viscosity,
+B.Value, Iodine (I2), Free PO, Acid Value, SAP, MEA, DEA, TEA, Colour (e.g. read
+"Moist"/"Meist"/"Maist" as Moisture; "PH"/"Ph" as pH; "Vis"/"Visc." as Viscosity;
+"APHA"/"ADHA" as APHA). Do not invent a parameter you cannot read — omit it. Read
+the numeric RESULT digit-by-digit.
+
+STEP 7 — UNLOADING / FILLING.
+Fill "unloading_details": tank_no, tank_initial, tank_final, no_of_barrels_ibc,
+total_filled_kg (the final total, e.g. 8100), packing_breakup (the arithmetic as
+written, e.g. "09 x 900 kg = 8100 kg"). Also capture shift_incharge_name,
+shift_incharge_sign (name if legible else "signed"), panel_incharge.
+
+STEP 8 — REMARKS PAGE.
+If page_type = "remarks": copy the ENTIRE handwritten narrative verbatim (keep
+line breaks, shift markers like "A-Shift", times, and quantities) into
+"remarks_text". Leave the grid fields null.
+
+STEP 9 — JOIN KEYS (fill on EVERY page; used to pair a remarks page with its main
+page). In "join_keys" record whatever this page shows:
+- "date": the primary date on the page.
+- "product_hint"/"batch_hint": product or batch no if the page reveals one.
+- "la_charge_start": the LA/first-material charging start time.
+- "unloading_start"/"unloading_finish": the unloading/FILLING start & finish time.
+- "total_filled_kg": the total kg filled/unloaded.
+These are the values that appear on BOTH the main page and its remarks page, so
+extract them consistently (same format) wherever visible.
+
+STEP 10 — ANYTHING ELSE.
+Put any additional labelled data that has no home above into "extra_fields" as
+{ "label": "value" }, and free observations into "page_notes". Never discard
+written data.
+
+Return ONLY the JSON object.

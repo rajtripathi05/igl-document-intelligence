@@ -35,9 +35,69 @@ Rules:
 - Combine information across all pages into one document.
 - Preserve PO numbers, gate pass / material document numbers, vehicle numbers,
   vendor codes, material codes, quantities and dates exactly.
-- Prefer confident handwritten values when they override printed values.
 - Vehicle numbers, driver names, quantities and quality readings are frequently
   handwritten — read them carefully.
 - If a field is unavailable return null (never an empty string).
 - Never guess values.
+
+MULTI-VALUE / MULTI-LINE CAPTURE (important):
+ONE uploaded bundle may staple together SEVERAL SAP gate passes (e.g. IGP No.
+KP08I0493054 dated 04.06 AND IGP No. KP08I0492903 dated 03.06 for the same
+delivery), followed by the supplier invoice, transport copy and e-way bill. It is
+still ONE output record — never split it into several. A single bundle therefore
+often carries the SAME field more than once with DIFFERENT values — e.g. two
+gate-pass numbers, two entry dates/times, two vendors, or an SAP Vehicle No. plus a
+handwritten one. When a field
+has more than one DISTINCT value across the pages, DO NOT drop or overwrite any —
+return ALL distinct values in that SAME field as one string with each value on its
+own line (separated by a newline "\n"). Put the most reliable / handwritten value
+first, then the others. Deduplicate identical values. This keeps everything in a
+single cell for now. When a field has a single value, return it as a plain string.
+
+FIELD REFERENCE (the invoice-sourced fields that must be captured for the
+register — read them precisely):
+CRITICAL: capture ONLY the value actually printed or handwritten on THIS
+document. The descriptions below explain what each field IS — they are NOT values
+to output. NEVER copy a number or code from these instructions; if a field is not
+on the document, return null.
+- PO NO = the Purchase Order number shown on the gate pass / invoice (a ~10-digit
+  SAP number). PO DATE = its date.
+- Delivery Note = the supplier invoice / challan number as printed (an
+  alphanumeric invoice-no or challan-no). DOC DATE = that document's date.
+- Vehicle No. = ONLY the lorry / tanker registration plate (two letters + digits,
+  e.g. UP16QT5590), or "BYHAND"; capture EVERY vehicle shown, but NEVER put GR
+  numbers, challan numbers, or remarks in this field.
+- Transporter Code = the numeric transporter code if printed. Transporter NAME =
+  the transport COMPANY NAME only. Name = the driver's name.
+- VENDOR NAME / Transporter NAME must be the firm's NAME only — do NOT include its
+  street address (drop lines like "1/NETAJI SUBHASH MARG", "235 KAMLA MARKET").
+- Mat Doc No = the SAP Material Document number (labelled "Document No.", ~10
+  digits, e.g. 50020…). Keep it separate from Delivery Note (the invoice/challan).
+- Transport GR No. and TGRDT = the transporter goods-receipt number and its date
+  ("NA" when the document says so).
+- NET VAL IN DOC CURR = the net / total value, digits only.
+- SUGER DESP, BRIX DESP., STRENGTH OF SDS = quality readings for spirit / ethanol
+  (SDS) consignments (handwritten numbers or percentages); leave null for
+  non-spirit items (bearings, chemicals, spares, etc.).
+ALSO capture these SAP / gate-pass fields — they ARE columns of the register:
+- Mat Doc No, Mat Doc Yr, Gatepass No. (the SAP IGP No., e.g. KP08I…), Entry DATE,
+  Entry time, GP Status, Purpose, Department Code, Person Created, and the Manual
+  IGP number + date.
+- VENDOR Code + VENDOR NAME (the supplier dispatching the goods).
+- For EACH material row: MATERIAL NO. (item code), MATERIAL DESC., UNIT (BL/KG/
+  NOS/LOT), QUANTITY — return one object per material line in "items".
+- No. of Packets, Nature of packing, Vehicle Type, MF4 No./date, Form 31.
+When TWO OR MORE gate passes are stapled together, each has its OWN Gatepass No.,
+Entry date/time, Vendor and Vehicle — newline-join each of those across the
+entries. PO No., Delivery Note, Net Value and the material list are usually shared,
+so give them once.
+
+DATES: Indian format DD/MM/YYYY or DD.MM.YY. These consignments are from 2025-2026
+— read the year digits carefully and do NOT output 2020, 2028 or similar unless
+they are unmistakably written. Keep the date exactly as written; never shift it.
+
+DEDUPE MULTI-VALUES: when a field has several values, treat values that differ
+only by letter-case, spacing or punctuation as identical and keep just one
+(e.g. "KASIM" and "Kasim" → one line).
+
 - Return ONLY valid JSON matching the schema below.

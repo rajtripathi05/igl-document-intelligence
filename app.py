@@ -256,7 +256,7 @@ def _run_processing(
         classifier = build_classifier()
         candidates = [
             p for p in (production_processors_for_department(nav.department.key) or active_processors())
-            if p.spec.engine != "tabular"
+            if p.spec.engine not in ("tabular", "logbook")
         ]
 
     config.ai_gateway.set_queue(len(docs))
@@ -471,6 +471,11 @@ def _render_manual_mode(nav: Nav) -> bool:
         _render_tabular_processor(nav, processor)
         return True
 
+    # Log Book: many mobile-photo pages -> one combined register row per batch.
+    if processor.spec.engine == "logbook":
+        _render_logbook_processor(nav, processor)
+        return True
+
     _render_uploader_and_process(nav, processor)
     return False
 
@@ -619,7 +624,7 @@ def _render_auto_mode(nav: Nav) -> None:
     """Auto Detect mode: upload, then classify among production processors."""
     candidates = [
         p for p in production_processors_for_department(nav.department.key)
-        if p.spec.engine != "tabular"
+        if p.spec.engine not in ("tabular", "logbook")
     ]
     if not candidates:
         st.info(
@@ -704,6 +709,134 @@ def _render_tabular_result(spec, result: dict) -> None:
         "⬇️ Download Customer Summary (Excel)",
         data=result.get("excel_bytes", b""),
         file_name=f"{spec.json_suffix or spec.use_case_key}_summary.xlsx",
+        mime=_EXCEL_MIME,
+        type="primary",
+        use_container_width=True,
+    )
+
+
+# ----- Log Book (many photos -> one row per batch) workspace ------------ #
+
+
+def _render_logbook_processor(nav: Nav, processor: BaseProcessor) -> None:
+    """Log Book workspace: many page photos -> one combined register row per batch.
+
+    Each uploaded page is read individually via the AI gateway, then each printed
+    grid page is paired with its 'Shift Process Activities' remarks page into ONE
+    register row. Handles a single product's pages or hundreds of pages across
+    many products at once. Reviewer edits flow back into the downloaded register.
+    """
+    spec = processor.spec
+    title = spec.business_process or spec.document_type
+    ui.section_heading(f"📒 {title}")
+    st.caption(
+        "Upload the log-book page photos (mostly handwritten). Drop a whole "
+        "product's pages — or hundreds of pages across many products — at once. "
+        "Each batch's printed grid page and its 'Shift Process Activities' remarks "
+        "page are paired automatically into ONE row. The struck-through printed "
+        "product name and the handwritten real product are both captured."
+    )
+
+    if not has_ai_key():
+        st.warning(
+            "No AI provider key is configured. Set AI_API_KEY (and AI_PROVIDER / "
+            "DEFAULT_MODEL) in the .env file to process log books."
+        )
+
+    result_key = f"logbook_result:{spec.use_case_key}"
+    files = st.file_uploader(
+        f"Upload log-book pages for {title}",
+        type=["jpg", "jpeg", "png", "webp", "bmp", "tiff", "tif", "pdf"],
+        accept_multiple_files=True,
+        label_visibility="collapsed",
+        key=f"logbook_upload:{spec.use_case_key}",
+    )
+
+    if files and st.button("⚡ Build Register", type="primary", use_container_width=True):
+        payload = [(f.name, f.getvalue()) for f in files]
+        bar = st.progress(0.0, text="Reading pages…")
+
+        def _cb(done: int, total: int, name: str) -> None:
+            frac = min(done / total, 1.0) if total else 1.0
+            label = ("Assembling batches…" if name in ("assembling", "")
+                     else f"Reading page {min(done + 1, total)}/{total}…")
+            try:
+                bar.progress(frac, text=label)
+            except Exception:  # noqa: BLE001 - progress is cosmetic
+                pass
+
+        with ui.loader_3d(
+            "Reading log-book pages…",
+            "Extracting each page and pairing remarks into batches",
+        ):
+            try:
+                st.session_state[result_key] = processor.run_logbook(payload, progress=_cb)
+            except Exception as exc:  # noqa: BLE001 - surface a clean message
+                logger.exception("Log Book processing failed for %s", spec.use_case_key)
+                st.error(f"Could not build the register: {exc}")
+                st.session_state.pop(result_key, None)
+        try:
+            bar.empty()
+        except Exception:  # noqa: BLE001
+            pass
+
+    result = st.session_state.get(result_key)
+    if result:
+        _render_logbook_result(processor, result)
+
+
+def _render_logbook_result(processor: BaseProcessor, result: dict) -> None:
+    """Render batch KPIs, warnings, an editable review table, and the register."""
+    spec = processor.spec
+    stats = result.get("stats", {})
+    cols = st.columns(5)
+    cols[0].metric("Images", stats.get("images", 0))
+    cols[1].metric("Batches (rows)", stats.get("batches", 0))
+    cols[2].metric("Products", stats.get("products", 0))
+    cols[3].metric("Main pages", stats.get("main_pages", 0))
+    cols[4].metric("Remarks pages", stats.get("remarks_pages", 0))
+
+    names = stats.get("product_names") or []
+    if names:
+        st.caption("Products: " + ", ".join(names[:25]) + (" …" if len(names) > 25 else ""))
+
+    for warning in result.get("warnings", []):
+        st.warning(warning)
+
+    rows = result.get("rows", [])
+    if not rows:
+        st.info("No batches were assembled from the uploaded pages.")
+        return
+
+    st.markdown(
+        "**Review & edit** — correct any cell below; the downloaded register "
+        "reflects your edits. One row = one batch."
+    )
+    edited = st.data_editor(
+        rows,
+        use_container_width=True,
+        hide_index=True,
+        num_rows="dynamic",
+        key=f"logbook_editor:{spec.use_case_key}",
+    )
+
+    # Normalize the editor output back to a list of dicts.
+    try:
+        edited_rows = edited.to_dict("records") if hasattr(edited, "to_dict") else list(edited)
+    except Exception:  # noqa: BLE001
+        edited_rows = rows
+
+    # Rebuild the styled register from the (possibly edited) rows.
+    try:
+        data = processor.rebuild_logbook(result.get("column_defs", []), edited_rows)
+    except Exception:  # noqa: BLE001 - fall back to the extraction-time workbook
+        logger.exception("Rebuilding logbook register from edits failed; using original.")
+        data = result.get("excel_bytes", b"")
+
+    st.download_button(
+        "⬇️ Download Log Book Register (Excel)",
+        data=data,
+        file_name="log_book_register.xlsx",
         mime=_EXCEL_MIME,
         type="primary",
         use_container_width=True,
