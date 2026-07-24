@@ -1,25 +1,36 @@
-"""RA Posting — deterministic tabular engine (hybrid AI name cleanup).
+"""RA Posting — deterministic tabular engine (v2: multi-sheet, multi-block, dedup).
 
-Reads SBI or IDBI bank statements (Excel/CSV), keeps only CREDIT (CR) entries,
-and produces a customer-wise merged summary:
+Reads SBI / IDBI bank statements (Excel .xlsx/.xls/.xlsb or CSV), keeps only
+CREDIT (CR) entries, and produces a customer-wise summary:
 
     Date | Customer Name | Amount | Document No. | Mode | Bank Name
 
-Customers are grouped A-Z, each credit shown as one row, followed by a
-``<name> Total`` subtotal row per customer and a final ``GRAND TOTAL`` row —
-matching the business template.
+Why v2 — the real compiled workbooks (e.g. "suman bank statements.xlsb")
+broke v1 in three ways, all fixed here:
 
-Hybrid design (per the business decision):
-- **Deterministic (Python):** bank detection, header location, CR filtering,
-  amount/date parsing, payment mode, document number, and a first-pass
-  customer-name heuristic — all exact and free.
-- **AI (optional):** the shared AI gateway cleans/normalises the messy narration
-  into a canonical customer name. If AI is unavailable it degrades gracefully to
-  the rule-based name — the summary is always produced.
+1. **Multiple sheets per workbook** (one per bank: 'IDBI', 'SBI'). v1 read only
+   the first sheet. v2 reads EVERY sheet of every uploaded file.
+2. **Many pasted statement blocks per sheet** — the same account is downloaded
+   repeatedly and pasted below the previous download, each block with its own
+   header row and an overlapping date range. v1 parsed only the first header,
+   so the same transaction appeared 4-5 times. v2 detects every header row,
+   re-maps columns per block, and de-duplicates: same canonical timestamp +
+   narration + reference + amount = the same bank posting (the running balance
+   is deliberately NOT part of the identity — a retroactive posting shifts all
+   later balances between downloads and would fake uniqueness).
+3. **Messy narrations** — v1 returned reference fragments as names ("2",
+   "2601270023"). v2 understands the observed SBI/IDBI narration formats
+   (see ``_heuristic_name``) and, for SBI, also reads the counterparty name
+   from the 'Ref No./Cheque No.' column ("TRANSFER FROM <acct> / <NAME>").
 
-Bank Name = the SOURCE bank (SBI / IDBI), auto-detected from the file's columns.
-Document No. = the transaction reference/UTR (SBI: 'Ref No./Cheque No.' column;
-IDBI: 'Cheque No' when present, else the UTR parsed from the narration).
+Output workbook: the two business title lines, then the summary table —
+customers grouped A-Z, one row per credit, a "<name> Total" subtotal per
+customer and a GRAND TOTAL. **Each bank gets its own sheet**; a combined
+"All Banks" sheet is added when more than one bank is present.
+
+Hybrid design (unchanged): everything above is deterministic Python. The
+shared AI gateway, when available, only cleans/normalises customer names;
+if it is unavailable the summary is still produced with rule-based names.
 
 Entry point (called by ``FolderProcessor.run_tabular``):
     run(files: list[tuple[str, bytes]], ai_gateway=None) -> dict
@@ -31,13 +42,20 @@ import io
 import json
 import logging
 import re
-from datetime import datetime
+from collections import Counter
+from datetime import datetime, timedelta
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 #: Output columns, in order (mirrors the business summary template).
 SUMMARY_COLUMNS = ["Date", "Customer Name", "Amount", "Document No.", "Mode", "Bank Name"]
+
+#: The two fixed title lines above the table (business template).
+TITLE_LINES = ["we will refer CR entries only", "summary of customers"]
+
+#: Flat end-user sheet ("Conclusion"): one filter-friendly row per credit.
+CONCLUSION_COLUMNS = ["Customer Name", "Date", "Time", "Document No.", "Mode", "Bank Name", "Amount"]
 
 #: Payment-mode word patterns (whole-word, so 'PRODUCTS' never matches 'CTS').
 _MODE_WORDS: list[tuple[str, str]] = [
@@ -50,13 +68,25 @@ _MODE_WORDS: list[tuple[str, str]] = [
     (r"\bCLG\b", "Cheque"),
     (r"\bCTS\b", "Cheque"),
     (r"\bCASH\b", "Cash"),
+    (r"\bINB\b", "INB"),
 ]
 
 #: First token of a slash-delimited IMPS/NEFT narration (MODE/ref/NAME/...).
 _SLASH_MODES = {"IMPS", "NEFT", "RTGS", "UPI"}
 
+#: Sheet names that ARE the bank label (upper-cased comparison).
+_KNOWN_BANKS = {"SBI", "IDBI", "HDFC", "ICICI", "AXIS", "PNB", "BOB", "CANARA", "UNION", "KOTAK"}
+
 #: Max unique narrations sent to the AI per request (keeps token cost bounded).
 _AI_BATCH = 80
+
+#: Company-suffix normalisation used for grouping keys (display keeps original).
+_SUFFIX_MAP = [
+    (r"\bPRIVATE\b", "PVT"),
+    (r"\bLIMITED\b", "LTD"),
+    (r"\bPVT\.\b", "PVT"),
+    (r"\bLTD\.\b", "LTD"),
+]
 
 
 # ----- Small parsing helpers -------------------------------------------- #
@@ -68,10 +98,7 @@ def _norm(value: Any) -> str:
 
 
 def _num(value: Any) -> float | None:
-    """Parse an Indian-formatted amount ('10,69,870.00', '168,740') to float.
-
-    Returns None for blanks/dashes. Parenthesised values are treated as negative.
-    """
+    """Parse an Indian-formatted amount ('10,69,870.00', '168,740') to float."""
     if value is None:
         return None
     text = str(value).strip()
@@ -88,12 +115,8 @@ def _num(value: Any) -> float | None:
     return -number if negative else number
 
 
-def _fmt_date(value: Any, dayfirst: bool) -> str:
-    """Normalize a statement date to DD/MM/YYYY (best effort; raw on failure).
-
-    Handles text dates, real datetimes, and Excel serial numbers (which binary
-    ``.xlsb`` / legacy ``.xls`` files often yield instead of formatted dates).
-    """
+def _fmt_date(value: Any) -> str:
+    """Normalize a statement date to DD/MM/YYYY (best effort; raw on failure)."""
     if value is None:
         return ""
     if isinstance(value, datetime):
@@ -101,20 +124,15 @@ def _fmt_date(value: Any, dayfirst: bool) -> str:
     text = str(value).strip()
     if not text:
         return ""
-    # Excel serial date fallback (days since 1899-12-30), ~1954..2119.
     try:
         serial = float(text)
     except ValueError:
         serial = None
     if serial is not None and 20000 <= serial <= 80000:
-        from datetime import timedelta
-
         return (datetime(1899, 12, 30) + timedelta(days=int(serial))).strftime("%d/%m/%Y")
-    text = text.split()[0]  # drop any trailing time component
-    day_formats = ("%d/%m/%Y", "%d-%m-%Y", "%d-%b-%Y", "%d/%m/%y", "%d-%m-%y")
-    month_formats = ("%m/%d/%Y", "%m-%d-%Y", "%m/%d/%y", "%m-%d-%y")
-    order = (*day_formats, *month_formats) if dayfirst else (*month_formats, *day_formats)
-    for fmt in (*order, "%Y-%m-%d"):
+    text = text.split()[0]
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d-%b-%Y", "%d/%m/%y",
+                "%d-%m-%y", "%d.%m.%Y", "%m/%d/%Y", "%m-%d-%Y"):
         try:
             return datetime.strptime(text, fmt).strftime("%d/%m/%Y")
         except ValueError:
@@ -122,15 +140,17 @@ def _fmt_date(value: Any, dayfirst: bool) -> str:
     return text
 
 
-def _mode(description: Any) -> str:
-    """Derive the payment mode from the narration text.
+def _date_sort_key(display: str) -> str:
+    try:
+        return datetime.strptime(display, "%d/%m/%Y").strftime("%Y%m%d")
+    except ValueError:
+        return ""
 
-    Uses whole-word matching first (NEFT/RTGS/IMPS/UPI/Cheque/Cash), then infers
-    from a leading bank reference code when no keyword is present — e.g.
-    'HDFCR52026...'/'ICICR4...' (4-letter bank + 'R' + digits) -> RTGS,
-    '...N...' -> NEFT.
-    """
+
+def _mode(description: Any) -> str:
     text = str(description or "").upper()
+    if "BY BILL" in text or "LCBD" in text:
+        return "Bill/LC"
     for pattern, label in _MODE_WORDS:
         if re.search(pattern, text):
             return label
@@ -141,78 +161,157 @@ def _mode(description: Any) -> str:
 
 
 def _clean_name_tail(value: Any) -> str:
-    """Tidy an extracted name: collapse whitespace, strip edge punctuation."""
     text = re.sub(r"\s+", " ", str(value or "")).strip()
     return text.strip(" .-*/").strip()
 
 
-def _heuristic_name(description: Any) -> str:
-    """First-pass customer name from a narration (handles the observed formats).
+def _letters_ratio(text: str) -> float:
+    if not text:
+        return 0.0
+    return sum(c.isalpha() for c in text) / len(text)
 
-    - 'NEFT-IN42614555284440-JAIN AGRO CHEM'            -> 'JAIN AGRO CHEM'  (dash)
-    - '...*AXODH14227614576*VARDHMAN HEALTHC--'          -> 'VARDHMAN HEALTHC' (SBI star)
-    - 'IMPS/614414542545/YASHIKA PR/BANK NO/XX0000/...'  -> 'YASHIKA PR'      (slash)
-    - 'HDFCR52026052261673880 NAV UDYOG'                 -> 'NAV UDYOG'       (ref + name)
 
-    Rule-based only — a best-effort fallback; the AI cleanup refines these from
-    the full narration when a key is configured.
-    """
+def _looks_like_name(text: str) -> bool:
+    cleaned = _clean_name_tail(text)
+    return len(cleaned) >= 3 and _letters_ratio(cleaned.replace(" ", "")) >= 0.7
+
+
+#: Narration segments that are remarks, never party names.
+_JUNK_SEGMENTS = re.compile(
+    r"^(BATCH?|BILL|BILLS|PAY|PYMT|PAYMENT|PAYMENTS|INV|INVOICE|ONLINE|OTHERS?|"
+    r"TRANSFER|BANK\s*NOT?|IMPS|NEFT|RTGS|UPI)\b[-\s]*\S*$",
+    re.IGNORECASE,
+)
+
+
+def _junk_segment(text: str) -> bool:
+    return bool(_JUNK_SEGMENTS.match(_clean_name_tail(text)))
+
+
+def _heuristic_name(description: Any, ref: Any = "") -> str:
     text = str(description or "").strip()
+    reftext = re.sub(r"\s+", " ", str(ref or "")).strip()
+
+    # 0) SBI ref column: 'TRANSFER FROM <acct> / <NAME>' or '<NAME> /'.
+    if reftext:
+        match = re.search(r"/\s*([A-Za-z][A-Za-z0-9 .&()\-]{2,})\s*$", reftext)
+        if match and _looks_like_name(match.group(1)):
+            return _clean_name_tail(match.group(1))
+        match = re.search(r"TRANSFER FROM\s+\d+\s+([A-Za-z][A-Za-z .&()\-]{2,}?)\s*/",
+                          reftext, re.IGNORECASE)
+        if match and _looks_like_name(match.group(1)):
+            return _clean_name_tail(match.group(1))
+
     if not text:
         return ""
-    # MODE/ref/NAME/... (IMPS retail narration): the name is the 3rd field.
-    if "/" in text:
-        parts = [p.strip() for p in text.split("/")]
-        if len(parts) >= 3 and parts[0].upper() in _SLASH_MODES:
-            name = _clean_name_tail(parts[2])
-            if name:
-                return name
-    # *-delimited (SBI): trailing party segment.
-    if "*" in text:
-        return _clean_name_tail(text.split("*")[-1])
-    # Leading bank-reference token (has a digit, 10+ chars) then the name.
-    match = re.match(r"^(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{10,}\s+(.+)$", text)
-    if match:
+    body = re.sub(r"^\s*BY TRANSFER[-\s]*", "", text, flags=re.IGNORECASE)
+
+    # 1) '--NAME' suffix (SBI RTGS narration).
+    match = re.search(r"--\s*([A-Za-z][A-Za-z0-9 .&()\-]{2,})\s*$", body)
+    if match and _looks_like_name(match.group(1)):
         return _clean_name_tail(match.group(1))
-    # -delimited (NEFT-ref-NAME): trailing segment.
-    if "-" in text:
-        return _clean_name_tail(text.split("-")[-1])
-    return _clean_name_tail(text)
+
+    # 2) MODE/.../NAME/... (IMPS/UPI retail narration): first name-like field
+    #    after the mode + reference ('IMPS/6144.../YASHIKA PR/...',
+    #    'UPI/CR/6128.../SUDHAKAR/UTIB/...').
+    if "/" in body:
+        parts = [p.strip() for p in body.split("/")]
+        if len(parts) >= 3 and parts[0].upper().split()[-1] in _SLASH_MODES:
+            for part in parts[2:]:
+                if _looks_like_name(part) and not _junk_segment(part):
+                    return _clean_name_tail(part)
+
+    # 3) '*'-delimited (SBI NEFT): the name is the segment AFTER the UTR —
+    #    'NEFT*CBIN0282138*CBINH26138420737*NISHA KARKI*BATC--' -> 'NISHA KARKI'
+    #    (the trailing segment is a remark like 'BATCH', never the name).
+    if "*" in body:
+        segments = [_clean_name_tail(s) for s in body.split("*")]
+        last_ref = max((i for i, s in enumerate(segments)
+                        if len(s) >= 10 and any(c.isdigit() for c in s)
+                        and re.fullmatch(r"[A-Za-z0-9]+", s or " ")), default=0)
+        candidates = [s for s in segments[last_ref + 1:]
+                      if _looks_like_name(s) and not _junk_segment(s)]
+        if not candidates:
+            candidates = [s for s in segments[1:]
+                          if _looks_like_name(s) and not _junk_segment(s)]
+        if candidates:
+            return candidates[0]
+
+    # 4) 'NEFT-<ref>-NAME' (IDBI).
+    match = re.match(r"^(?:NEFT|RTGS|IMPS|UPI)\s*-\s*[A-Za-z0-9]+\s*-\s*(.+)$",
+                     body, re.IGNORECASE)
+    if match and _looks_like_name(match.group(1)):
+        return _clean_name_tail(match.group(1))
+
+    # 5) Leading bank-reference token (has a digit, 10+ chars) then the name.
+    match = re.match(r"^(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{10,}\s+(.+)$", body)
+    if match and _looks_like_name(match.group(1)):
+        return _clean_name_tail(match.group(1))
+
+    # 5b) Leading name then a long reference number ('INDIA GLYCOLS LTD 2601...').
+    match = re.match(r"^([A-Za-z][A-Za-z .&()\-]{2,}?)\s+\d{6,}$", body)
+    if match and _looks_like_name(match.group(1)):
+        return _clean_name_tail(match.group(1))
+
+    # 6) 'BULK POSTING-BY SALARY--' and similar.
+    match = re.match(r"^BULK POSTING[-\s]*BY\s+(.+?)[-\s]*$", body, re.IGNORECASE)
+    if match:
+        return _clean_name_tail(match.group(1)).title()
+
+    # 7) Cheque credits carry no payer name.
+    if re.match(r"^CREDIT[-\s]*CHQ", body, re.IGNORECASE):
+        return ""
+
+    # 8) '-'-delimited fallback: trailing name-like segment.
+    if "-" in body:
+        tail = _clean_name_tail(body.split("-")[-1])
+        if _looks_like_name(tail):
+            return tail
+
+    cleaned = _clean_name_tail(body)
+    return cleaned if _looks_like_name(cleaned) else ""
 
 
-def _utr_from_desc(description: Any) -> str:
-    """Extract the first long alphanumeric token (UTR-like) from a narration."""
-    tokens = re.findall(r"[A-Z0-9]{10,}", str(description or "").upper())
+def _utr_from_text(text: Any) -> str:
+    for token in re.findall(r"[A-Z0-9]{10,}", str(text or "").upper()):
+        if any(c.isdigit() for c in token) and any(c.isalpha() for c in token):
+            return token
+    tokens = re.findall(r"\d{10,}", str(text or ""))
     return tokens[0] if tokens else ""
 
 
-def _idbi_docno(cheque_no: str, description: str) -> str:
-    """IDBI document number: cheque number if present, else the UTR from narration."""
-    cheque = (cheque_no or "").strip()
-    if cheque and cheque not in ("0", "0.0"):
+def _doc_no(description: str, cheque_no: str, ref: str) -> str:
+    desc = str(description or "")
+    cheque = str(cheque_no or "").strip()
+    if cheque and cheque not in ("0", "0.0", "nan"):
         return cheque
-    match = re.search(r"(?:NEFT|RTGS|IMPS|UPI)[-\s]*([A-Z0-9]{6,})", str(description).upper())
+
+    match = re.search(r"UTR NO[:\s]*([A-Z0-9]{8,})", desc, re.IGNORECASE)
     if match:
         return match.group(1)
-    return _utr_from_desc(description)
+    match = re.search(r"\bCHQ\s*\.?\s*(\d{4,})", desc, re.IGNORECASE)
+    if match:
+        return match.group(1)
+    match = re.search(r"(?:NEFT|RTGS|IMPS|UPI)[-/\s]*([A-Z0-9]{6,})", desc, re.IGNORECASE)
+    if match and match.group(1).upper() not in ("TRANSFER",):
+        return match.group(1)
+    utr = _utr_from_text(desc)
+    if utr:
+        return utr
+
+    reftext = str(ref or "")
+    reftext = re.sub(r"TRANSFER\s+(FROM|TO)\s+\d+", " ", reftext, flags=re.IGNORECASE)
+    match = re.search(r"([A-Z]{2,}[0-9][A-Z0-9]{4,})", reftext)
+    if match:
+        return match.group(1)
+    token = _utr_from_text(reftext)
+    return token
 
 
-def _sbi_docno(ref: str, description: str) -> str:
-    """SBI document number: the 'Ref No./Cheque No.' column, else UTR from narration."""
-    text = (ref or "").strip().rstrip("/ ").strip()
-    return text or _utr_from_desc(description)
+# ----- Table reading + bank/block detection ------------------------------ #
 
 
-# ----- Table reading + bank detection ----------------------------------- #
-
-
-def _read_table(name: str, data: bytes):
-    """Read an uploaded Excel/CSV file into a header-less string DataFrame.
-
-    CSVs are parsed row-by-row and padded to a uniform width so that a short
-    preamble line (fewer commas than the table) cannot collapse the column count
-    or cause data rows to be dropped as "bad lines".
-    """
+def _read_sheets(name: str, data: bytes) -> dict[str, Any]:
     import pandas as pd
 
     lower = name.lower()
@@ -223,38 +322,52 @@ def _read_table(name: str, data: bytes):
         rows = list(_csv.reader(io.StringIO(text)))
         width = max((len(r) for r in rows), default=0)
         rows = [r + [""] * (width - len(r)) for r in rows]
-        frame = pd.DataFrame(rows, dtype=str)
+        return {"CSV": pd.DataFrame(rows, dtype=str).fillna("")}
+
+    if lower.endswith(".xlsb"):
+        engine = "pyxlsb"
+    elif lower.endswith(".xls"):
+        engine = "xlrd"
     else:
-        # Pick the reader engine by format: .xlsb (binary) -> pyxlsb,
-        # .xls (legacy) -> xlrd, .xlsx -> openpyxl (auto).
-        if lower.endswith(".xlsb"):
-            engine = "pyxlsb"
-        elif lower.endswith(".xls"):
-            engine = "xlrd"
-        else:
-            engine = None
-        frame = pd.read_excel(io.BytesIO(data), header=None, dtype=str, engine=engine)
-    return frame.fillna("")
+        engine = None
+    frames = pd.read_excel(io.BytesIO(data), sheet_name=None, header=None,
+                           dtype=str, engine=engine)
+    return {str(k): v.fillna("") for k, v in frames.items()}
 
 
-def _find_header(frame) -> tuple[int | None, str | None, list[str]]:
-    """Locate the header row and detect the bank (SBI vs IDBI).
+def _header_signature(cells: list[str]) -> str | None:
+    cellset = {c for c in cells if c}
+    if any(c.startswith("debit") for c in cellset) and any(c.startswith("credit") for c in cellset):
+        return "SBI"
+    if "crdr" in cellset and any(c.startswith("amount") for c in cellset):
+        return "IDBI"
+    return None
 
-    Returns ``(row_index, bank, normalized_header_cells)`` or ``(None, None, [])``.
-    """
-    limit = min(len(frame), 40)
-    for i in range(limit):
+
+def _find_blocks(frame) -> list[tuple[int, str, dict[str, int]]]:
+    blocks: list[tuple[int, str, dict[str, int]]] = []
+    for i in range(len(frame)):
         cells = [_norm(x) for x in frame.iloc[i].tolist()]
-        cellset = {c for c in cells if c}
-        if "debit" in cellset and "credit" in cellset:
-            return i, "SBI", cells
-        if "crdr" in cellset and any(c.startswith("amount") for c in cells):
-            return i, "IDBI", cells
-    return None, None, []
+        style = _header_signature(cells)
+        if style is None:
+            continue
+        colmap: dict[str, int] = {}
+        for pos, cell in enumerate(cells):
+            if cell and cell not in colmap:
+                colmap[cell] = pos
+        blocks.append((i, style, colmap))
+    return blocks
+
+
+def _col(colmap: dict[str, int], *predicates) -> str | None:
+    for predicate in predicates:
+        for key in colmap:
+            if (key == predicate) if isinstance(predicate, str) else predicate(key):
+                return key
+    return None
 
 
 def _cell(row: list, colmap: dict[str, int], key: str | None) -> str:
-    """Return the trimmed string cell for a normalized column key."""
     if key is None:
         return ""
     pos = colmap.get(key)
@@ -263,66 +376,139 @@ def _cell(row: list, colmap: dict[str, int], key: str | None) -> str:
     return str(row[pos]).strip()
 
 
-def _row_idbi(row: list, colmap: dict[str, int]) -> dict[str, Any] | None:
-    """Parse one IDBI data row into a credit transaction (or None if not a credit)."""
-    if _norm(_cell(row, colmap, "crdr")) != "cr":
-        return None
-    amount_key = next((k for k in colmap if k.startswith("amount")), None)
-    amount = _num(_cell(row, colmap, amount_key))
-    if amount is None or amount == 0:
-        return None
-    description = _cell(row, colmap, "description")
-    return {
-        "date": _fmt_date(_cell(row, colmap, "txndate"), dayfirst=True),
-        "description": description,
-        "amount": amount,
-        "doc_no": _idbi_docno(_cell(row, colmap, "chequeno"), description),
-        "mode": _mode(description),
-        "bank": "IDBI",
-        "name_raw": _heuristic_name(description),
-    }
+def _parse_block(frame, start: int, end: int, style: str,
+                 colmap: dict[str, int], bank: str) -> list[dict[str, Any]]:
+    date_key = _col(colmap, "txndate", lambda k: "txndate" in k,
+                    lambda k: k.startswith("date"), lambda k: "valuedate" in k)
+    desc_key = _col(colmap, "description", lambda k: "descr" in k,
+                    lambda k: "narrat" in k, lambda k: "particular" in k)
+    if style == "IDBI":
+        crdr_key = _col(colmap, "crdr")
+        amount_key = _col(colmap, lambda k: k.startswith("amount"))
+        cheque_key = _col(colmap, "chequeno", lambda k: "cheque" in k)
+        ref_key = None
+        balance_key = _col(colmap, lambda k: "balance" in k)
+    else:  # SBI
+        crdr_key = None
+        amount_key = _col(colmap, "credit", lambda k: k.startswith("credit"))
+        cheque_key = None
+        ref_key = _col(colmap, lambda k: "refno" in k, lambda k: "cheque" in k)
+        balance_key = _col(colmap, lambda k: "balance" in k)
 
-
-def _row_sbi(row: list, colmap: dict[str, int]) -> dict[str, Any] | None:
-    """Parse one SBI data row into a credit transaction (or None if not a credit)."""
-    credit = _num(_cell(row, colmap, "credit"))
-    if credit is None or credit == 0:
-        return None
-    description = _cell(row, colmap, "description")
-    ref_key = next((k for k in colmap if "refno" in k or k == "chequeno"), None)
-    return {
-        "date": _fmt_date(_cell(row, colmap, "txndate"), dayfirst=False),
-        "description": description,
-        "amount": credit,
-        "doc_no": _sbi_docno(_cell(row, colmap, ref_key), description),
-        "mode": _mode(description),
-        "bank": "SBI",
-        "name_raw": _heuristic_name(description),
-    }
-
-
-def _parse_file(name: str, data: bytes) -> tuple[list[dict[str, Any]], str | None]:
-    """Parse a single file into its list of credit transactions + detected bank."""
-    frame = _read_table(name, data)
-    header_index, bank, header_cells = _find_header(frame)
-    if header_index is None:
-        return [], None
-
-    colmap: dict[str, int] = {}
-    for pos, cell in enumerate(header_cells):
-        if cell and cell not in colmap:  # first occurrence wins
-            colmap[cell] = pos
-
-    parse_row = _row_idbi if bank == "IDBI" else _row_sbi
     transactions: list[dict[str, Any]] = []
-    for r in range(header_index + 1, len(frame)):
+    for r in range(start, end):
         row = frame.iloc[r].tolist()
         if all(str(x).strip() == "" for x in row):
             continue
-        txn = parse_row(row, colmap)
-        if txn:
-            transactions.append(txn)
-    return transactions, bank
+        if style == "IDBI":
+            if _norm(_cell(row, colmap, crdr_key)) != "cr":
+                continue
+        amount = _num(_cell(row, colmap, amount_key))
+        if amount is None or amount <= 0:
+            continue
+        raw_date = _cell(row, colmap, date_key)
+        date_display = _fmt_date(raw_date)
+        if not date_display:
+            continue
+        description = _cell(row, colmap, desc_key)
+        cheque = _cell(row, colmap, cheque_key)
+        ref = _cell(row, colmap, ref_key)
+        balance = _num(_cell(row, colmap, balance_key))
+        transactions.append({
+            "date": date_display,
+            "raw_date": raw_date,
+            "description": description,
+            "ref": ref,
+            "amount": round(amount, 2),
+            "balance": balance,
+            "doc_no": _doc_no(description, cheque, ref),
+            "mode": _mode(description),
+            "bank": bank,
+            "name_raw": _heuristic_name(description, ref),
+        })
+    return transactions
+
+
+def _canon_datetime(value: Any) -> str:
+    """Canonical 'YYYY-MM-DD HH:MM:SS' for a raw statement date cell.
+
+    The same transaction is stored as '25/05/2026 04:08:54' in one pasted
+    block and '2026-05-25 04:08:54.000' (or an Excel serial) in another —
+    normalising the full timestamp lets de-duplication see them as equal.
+    """
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        serial = float(text)
+    except ValueError:
+        serial = None
+    if serial is not None and 20000 <= serial <= 80000:
+        moment = datetime(1899, 12, 30) + timedelta(days=serial)
+        return moment.strftime("%Y-%m-%d %H:%M:%S")
+    text = re.sub(r"\.\d+$", "", text)  # drop fractional seconds
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S", "%d-%m-%Y %H:%M:%S",
+                "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d-%b-%Y"):
+        try:
+            return datetime.strptime(text, fmt).strftime("%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+    return text
+
+
+def _txn_key(txn: dict[str, Any]) -> tuple:
+    """Identity of a transaction for de-duplication.
+
+    Same posting timestamp + narration + reference + amount = the same
+    transaction, however many times it was downloaded and pasted. The running
+    balance is deliberately NOT part of the identity: a retroactive posting
+    shifts the running balance of every later row between two downloads of the
+    same account (observed in production data), which would fake uniqueness.
+    Genuine repeat payments differ in timestamp or reference (UTR / cheque /
+    LC-BD numbers live inside the narration).
+    """
+    return (
+        _canon_datetime(txn.get("raw_date")) or txn["date"],
+        re.sub(r"\s+", " ", txn["description"]).strip().upper(),
+        re.sub(r"\s+", " ", str(txn.get("ref", ""))).strip().upper(),
+        txn["amount"],
+    )
+
+
+def _dedupe_blocks(blocks_txns: list[list[dict[str, Any]]]) -> tuple[list[dict[str, Any]], int]:
+    """Merge per-block transaction lists, dropping duplicate downloads.
+
+    A transaction with the same canonical timestamp, narration, reference,
+    amount and running balance as one already seen is the same bank posting
+    (statements are downloaded repeatedly and pasted below each other, and
+    sometimes the same range is pasted twice under one header) — keep one.
+
+    Returns ``(unique_transactions, duplicates_removed)``.
+    """
+    seen: set = set()
+    unique: list[dict[str, Any]] = []
+    total = 0
+    for txns in blocks_txns:
+        for txn in txns:
+            total += 1
+            key = _txn_key(txn)
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(txn)
+    return unique, total - len(unique)
+
+
+def _bank_label(sheet_name: str, style: str, filename: str) -> str:
+    upper = re.sub(r"[^A-Z]", "", str(sheet_name or "").upper())
+    if upper in _KNOWN_BANKS:
+        return upper
+    for bank in _KNOWN_BANKS:
+        if re.search(rf"\b{bank}\b", str(filename or "").upper()):
+            return bank
+    return style
 
 
 # ----- Hybrid AI name cleanup ------------------------------------------- #
@@ -335,11 +521,6 @@ _AI_SYSTEM = (
 
 
 def _clean_names_ai(transactions: list[dict[str, Any]], ai_gateway) -> dict[str, str]:
-    """Return a mapping ``narration -> clean customer name`` using the AI gateway.
-
-    Deduplicates by narration and processes in bounded batches. Raises on gateway
-    failure so the caller can fall back to the rule-based names.
-    """
     unique: dict[str, str] = {}
     for txn in transactions:
         unique.setdefault(txn["description"], txn["name_raw"])
@@ -377,21 +558,61 @@ def _clean_names_ai(transactions: list[dict[str, Any]], ai_gateway) -> dict[str,
     return mapping
 
 
+# ----- Customer grouping (canonical keys + truncated-name merge) --------- #
+
+
+def _canonical(name: str) -> str:
+    text = str(name or "").upper()
+    for pattern, repl in _SUFFIX_MAP:
+        text = re.sub(pattern, repl, text)
+    return re.sub(r"[^A-Z0-9]", "", text)
+
+
+def _merge_truncated(names: list[str]) -> dict[str, str]:
+    by_key: dict[str, str] = {}
+    for name in names:
+        key = _canonical(name)
+        if key and (key not in by_key or len(name) > len(by_key[key])):
+            by_key[key] = name
+
+    keys = sorted(by_key, key=len, reverse=True)
+    resolve: dict[str, str] = {}
+    for key in keys:
+        if len(key) < 8:
+            continue
+        longer = [k for k in keys if k != key and k.startswith(key)]
+        if len(longer) == 1:
+            resolve[key] = resolve.get(longer[0], longer[0])
+
+    mapping: dict[str, str] = {}
+    for name in names:
+        key = _canonical(name)
+        final_key = resolve.get(key, key)
+        mapping[name] = by_key.get(final_key, name)
+    return mapping
+
+
 # ----- Summary assembly + Excel ----------------------------------------- #
 
 
 def _build_rows(transactions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], float, int]:
-    """Group by customer (A-Z), emit detail + subtotal rows + a grand total."""
+    display = _merge_truncated([
+        txn.get("clean_name") or txn.get("name_raw") or "(Unknown)"
+        for txn in transactions
+    ])
     groups: dict[str, list[dict[str, Any]]] = {}
     for txn in transactions:
-        name = txn.get("clean_name") or txn.get("name_raw") or "(Unknown)"
+        name = display.get(txn.get("clean_name") or txn.get("name_raw") or "(Unknown)",
+                           "(Unknown)")
         groups.setdefault(name, []).append(txn)
 
     rows: list[dict[str, Any]] = []
     grand_total = 0.0
     for name in sorted(groups, key=lambda s: s.lower()):
         subtotal = 0.0
-        for txn in groups[name]:
+        entries = sorted(groups[name],
+                         key=lambda t: (_date_sort_key(t.get("date", "")), t.get("amount", 0)))
+        for txn in entries:
             amount = float(txn.get("amount") or 0.0)
             subtotal += amount
             rows.append({
@@ -416,29 +637,55 @@ def _build_rows(transactions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]
     return rows, round(grand_total, 2), len(groups)
 
 
-def _is_total_row(row: dict[str, Any]) -> bool:
-    """True for subtotal / grand-total rows (styled bold, no per-txn fields)."""
-    name = str(row.get("Customer Name", ""))
-    return name == "GRAND TOTAL" or name.endswith(" Total")
+def _txn_time(txn: dict[str, Any]) -> str:
+    """HH:MM:SS posting time from the raw statement date ('' when date-only)."""
+    canon = _canon_datetime(txn.get("raw_date"))
+    if len(canon) >= 19:
+        time_part = canon[11:19]
+        return "" if time_part == "00:00:00" else time_part
+    return ""
 
 
-def build_summary_excel(rows: list[dict[str, Any]]) -> bytes:
-    """Render the customer summary to a styled single-sheet workbook."""
-    from openpyxl import Workbook
+def _build_conclusion_rows(transactions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Flat rows for the 'Conclusion' sheet — one credit per row, no subtotal
+    rows, sorted by customer A-Z then date/time (filter- and pivot-friendly)."""
+    display = _merge_truncated([
+        txn.get("clean_name") or txn.get("name_raw") or "(Unknown)"
+        for txn in transactions
+    ])
+    decorated = []
+    for txn in transactions:
+        name = display.get(txn.get("clean_name") or txn.get("name_raw") or "(Unknown)",
+                           "(Unknown)")
+        decorated.append((name.lower(), _date_sort_key(txn.get("date", "")),
+                          _txn_time(txn), txn, name))
+    decorated.sort(key=lambda entry: entry[:3])
+    rows = []
+    for _, _, time_part, txn, name in decorated:
+        rows.append({
+            "Customer Name": name,
+            "Date": txn.get("date", ""),
+            "Time": time_part,
+            "Document No.": txn.get("doc_no", ""),
+            "Mode": txn.get("mode", ""),
+            "Bank Name": txn.get("bank", ""),
+            "Amount": round(float(txn.get("amount") or 0.0), 2),
+        })
+    return rows
+
+
+def _write_conclusion_sheet(workbook, rows: list[dict[str, Any]]) -> None:
+    """Render the flat 'Conclusion' sheet (plain header row, auto-filter on)."""
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
 
     header_fill = PatternFill("solid", fgColor="1F4E78")
     header_font = Font(bold=True, color="FFFFFF", size=11)
-    total_font = Font(bold=True)
-    grand_fill = PatternFill("solid", fgColor="DDEBF7")
     thin = Side(style="thin", color="BBBBBB")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    workbook = Workbook()
-    sheet = workbook.active
-    sheet.title = "Customer Summary"
-
-    for col, header in enumerate(SUMMARY_COLUMNS, start=1):
+    sheet = workbook.create_sheet(title="Conclusion")
+    for col, header in enumerate(CONCLUSION_COLUMNS, start=1):
         cell = sheet.cell(row=1, column=col, value=header)
         cell.fill = header_fill
         cell.font = header_font
@@ -446,6 +693,57 @@ def build_summary_excel(rows: list[dict[str, Any]]) -> bytes:
         cell.border = border
 
     for r, row in enumerate(rows, start=2):
+        for col, header in enumerate(CONCLUSION_COLUMNS, start=1):
+            cell = sheet.cell(row=r, column=col, value=row.get(header))
+            cell.border = border
+            if header == "Amount":
+                cell.number_format = "#,##0.00"
+                cell.alignment = Alignment(horizontal="right")
+
+    widths = {"Customer Name": 38, "Date": 12, "Time": 10, "Document No.": 24,
+              "Mode": 10, "Bank Name": 12, "Amount": 16}
+    for col, header in enumerate(CONCLUSION_COLUMNS, start=1):
+        sheet.column_dimensions[get_column_letter(col)].width = widths.get(header, 14)
+    sheet.freeze_panes = "A2"
+    sheet.auto_filter.ref = f"A1:G{max(len(rows) + 1, 2)}"
+
+
+def _is_total_row(row: dict[str, Any]) -> bool:
+    name = str(row.get("Customer Name", ""))
+    return name == "GRAND TOTAL" or name.endswith(" Total")
+
+
+def _write_sheet(workbook, title: str, rows: list[dict[str, Any]]) -> None:
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+
+    header_fill = PatternFill("solid", fgColor="1F4E78")
+    header_font = Font(bold=True, color="FFFFFF", size=11)
+    title_font = Font(bold=True, italic=True, color="7F7F00")
+    subtitle_font = Font(bold=True, size=12)
+    total_font = Font(bold=True)
+    total_fill = PatternFill("solid", fgColor="F2F2F2")
+    grand_fill = PatternFill("solid", fgColor="DDEBF7")
+    thin = Side(style="thin", color="BBBBBB")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    ncols = len(SUMMARY_COLUMNS)
+
+    sheet = workbook.create_sheet(title=title[:31])
+
+    sheet.cell(row=1, column=1, value=TITLE_LINES[0]).font = title_font
+    sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=ncols)
+    sheet.cell(row=2, column=1, value=TITLE_LINES[1]).font = subtitle_font
+    sheet.merge_cells(start_row=2, start_column=1, end_row=2, end_column=ncols)
+
+    header_row = 3
+    for col, header in enumerate(SUMMARY_COLUMNS, start=1):
+        cell = sheet.cell(row=header_row, column=col, value=header)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+        cell.border = border
+
+    for r, row in enumerate(rows, start=header_row + 1):
         is_total = _is_total_row(row)
         is_grand = str(row.get("Customer Name", "")) == "GRAND TOTAL"
         for col, header in enumerate(SUMMARY_COLUMNS, start=1):
@@ -456,15 +754,32 @@ def build_summary_excel(rows: list[dict[str, Any]]) -> bytes:
                 cell.alignment = Alignment(horizontal="right")
             if is_total:
                 cell.font = total_font
-            if is_grand:
-                cell.fill = grand_fill
+                cell.fill = grand_fill if is_grand else total_fill
 
-    widths = {"Date": 12, "Customer Name": 34, "Amount": 16,
-              "Document No.": 22, "Mode": 10, "Bank Name": 12}
-    from openpyxl.utils import get_column_letter
+    widths = {"Date": 12, "Customer Name": 38, "Amount": 16,
+              "Document No.": 24, "Mode": 10, "Bank Name": 12}
     for col, header in enumerate(SUMMARY_COLUMNS, start=1):
         sheet.column_dimensions[get_column_letter(col)].width = widths.get(header, 14)
-    sheet.freeze_panes = "A2"
+    sheet.freeze_panes = f"A{header_row + 1}"
+
+
+def build_summary_excel(per_bank_rows: dict[str, list[dict[str, Any]]],
+                        combined_rows: list[dict[str, Any]],
+                        conclusion_rows: list[dict[str, Any]] | None = None) -> bytes:
+    """Workbook: 'Conclusion' (flat, end-user) first, then one sheet per bank,
+    then 'All Banks' when several banks are present."""
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    if conclusion_rows:
+        _write_conclusion_sheet(workbook, conclusion_rows)
+    for bank in sorted(per_bank_rows):
+        _write_sheet(workbook, bank, per_bank_rows[bank])
+    if len(per_bank_rows) > 1:
+        _write_sheet(workbook, "All Banks", combined_rows)
+    if not workbook.sheetnames:
+        _write_sheet(workbook, "Customer Summary", [])
 
     buffer = io.BytesIO()
     workbook.save(buffer)
@@ -475,36 +790,47 @@ def build_summary_excel(rows: list[dict[str, Any]]) -> bytes:
 
 
 def run(files: list[tuple[str, bytes]], ai_gateway=None) -> dict[str, Any]:
-    """Parse the uploaded statements and build the merged customer summary.
-
-    Args:
-        files: ``(filename, raw_bytes)`` for each uploaded Excel/CSV statement.
-        ai_gateway: Optional shared AI gateway for hybrid customer-name cleanup.
-
-    Returns:
-        ``{columns, rows, excel_bytes, warnings, stats}``.
-    """
     warnings: list[str] = []
-    transactions: list[dict[str, Any]] = []
-    banks_seen: list[str] = []
+    bank_blocks: dict[str, list[list[dict[str, Any]]]] = {}
 
     for name, data in files:
         try:
-            file_txns, bank = _parse_file(name, data)
-        except Exception as exc:  # noqa: BLE001 - one bad file must not abort the batch
-            logger.exception("Failed parsing %s", name)
+            sheets = _read_sheets(name, data)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Failed reading %s", name)
             warnings.append(f"{name}: could not read file ({exc}).")
             continue
-        if bank is None:
+
+        recognised_any = False
+        for sheet_name, frame in sheets.items():
+            blocks = _find_blocks(frame)
+            if not blocks:
+                continue
+            recognised_any = True
+            boundaries = [b[0] for b in blocks] + [len(frame)]
+            for index, (header_row, style, colmap) in enumerate(blocks):
+                bank = _bank_label(sheet_name, style, name)
+                txns = _parse_block(frame, header_row + 1, boundaries[index + 1],
+                                    style, colmap, bank)
+                if txns:
+                    bank_blocks.setdefault(bank, []).append(txns)
+        if not recognised_any:
             warnings.append(
                 f"{name}: unrecognised format — expected SBI (Debit/Credit columns) "
-                "or IDBI (CR/DR + Amount columns). Skipped."
+                "or IDBI (CR/DR + Amount columns) on at least one sheet. Skipped."
             )
-            continue
-        banks_seen.append(bank)
-        if not file_txns:
-            warnings.append(f"{name}: no credit (CR) entries found in this {bank} statement.")
-        transactions.extend(file_txns)
+
+    transactions: list[dict[str, Any]] = []
+    duplicates_removed = 0
+    for bank in sorted(bank_blocks):
+        unique, removed = _dedupe_blocks(bank_blocks[bank])
+        duplicates_removed += removed
+        transactions.extend(unique)
+    if duplicates_removed:
+        warnings.append(
+            f"Removed {duplicates_removed} duplicate entries caused by overlapping "
+            "statement downloads pasted into the same workbook."
+        )
 
     ai_used = False
     if transactions:
@@ -514,27 +840,38 @@ def run(files: list[tuple[str, bytes]], ai_gateway=None) -> dict[str, Any]:
             try:
                 mapping = _clean_names_ai(transactions, ai_gateway)
                 ai_used = bool(mapping)
-            except Exception as exc:  # noqa: BLE001 - degrade to heuristic names
+            except Exception as exc:  # noqa: BLE001
                 logger.warning("AI name cleanup failed: %s", exc)
                 warnings.append(f"AI name cleanup unavailable — used rule-based names. ({exc})")
         for txn in transactions:
             txn["clean_name"] = mapping.get(txn["description"]) or txn["name_raw"] or "(Unknown)"
 
-    rows, grand_total, customers = _build_rows(transactions)
+    per_bank_rows: dict[str, list[dict[str, Any]]] = {}
+    totals: dict[str, float] = {}
+    for bank in sorted({t["bank"] for t in transactions}):
+        bank_txns = [t for t in transactions if t["bank"] == bank]
+        rows_bank, total_bank, _ = _build_rows(bank_txns)
+        per_bank_rows[bank] = rows_bank
+        totals[bank] = total_bank
+
+    combined_rows, grand_total, customers = _build_rows(transactions)
+    conclusion_rows = _build_conclusion_rows(transactions)
 
     stats = {
         "files": len(files),
         "credit_entries": len(transactions),
+        "duplicates_removed": duplicates_removed,
         "customers": customers,
         "total_amount": grand_total,
-        "banks": sorted(set(banks_seen)),
+        "per_bank_total": totals,
+        "banks": sorted(per_bank_rows),
         "ai_used": ai_used,
     }
 
     return {
         "columns": SUMMARY_COLUMNS,
-        "rows": rows,
-        "excel_bytes": build_summary_excel(rows),
+        "rows": combined_rows,
+        "excel_bytes": build_summary_excel(per_bank_rows, combined_rows, conclusion_rows),
         "warnings": warnings,
         "stats": stats,
     }

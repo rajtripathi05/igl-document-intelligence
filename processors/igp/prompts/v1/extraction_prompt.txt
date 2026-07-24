@@ -8,27 +8,34 @@ gate pass. A field printed on one page applies to the whole document.
 
 Field guidance (return exactly what is printed; null when absent):
 
-- Gate Pass: gate pass number, material document number and year, entry date and
-  time, GP status, purpose, department code, person who created the entry, and
-  any manual IGP number/date. These are often SAP-stamped or handwritten at the
-  gate — extract only if present, else null.
-- Purchase Order: PO number and PO date the goods are received against.
-- Vendor: vendor code and vendor name (the supplier dispatching the goods).
-- Material line items: for each material, the material number/code, material
-  description, unit (UOM, e.g. BL, MT, NOS, LOT) and quantity. Extract every
-  material row; most gate passes have a single material but some have several.
-- Delivery: delivery note / supplier invoice number, document date, vehicle
-  number, vehicle type (TANKER / TRUCK / RAIL / OTHERS), number of packets and
-  nature of packing.
+- Gate Pass: gate pass / IGP number, material document number and year, entry
+  date and time, plant, GP status, purpose, department code, payment term, person
+  who created the entry, and any manual IGP number/date.
+- Purchase Order: PO number, PO date, and purchase group.
+- Vendor: vendor code, vendor name, and full address (the supplier dispatching).
+- Material line items: for EACH material row capture material number / item code,
+  description, unit (BL/MT/NOS/LOT/KG), quantity, HSN code, rate, discount %,
+  other charges, GST %, CGST %, SGST % and line value. Extract EVERY row.
+- Delivery: delivery note, supplier invoice number and invoice date, challan
+  number and challan date, document date, vehicle number, vehicle type
+  (TANKER/TRUCK/RAIL/OTHERS), number of packets, nature of packing, and the goods
+  condition (Good / Partly Damaged / Damaged).
 - Transporter: transporter code, transporter name, driver name, transport GR
   (goods receipt) number and GR date.
-- Excise / Transport Permits (common on spirit & ethanol consignments, often
-  handwritten or rubber-stamped): the MF4 (spirit movement permit) number and
-  its date, and the Form 31 (transit declaration) number. Extract only what is
-  actually printed or handwritten on the document; return null when absent.
-- Value: net value in document currency, and the currency.
-- Quality (for spirits/ethanol consignments, often handwritten): despatch grade,
-  sugar despatch, brix despatch, and strength of SDS.
+- Permits: MF4 (spirit movement permit) number and date, Form 31 (transit
+  declaration) number, and any Road Permit number + amount.
+- Value: net value in document currency, currency, supplier invoice value, and
+  the e-way bill number + amount.
+- Quality (spirit/ethanol, often handwritten): despatch grade, sugar despatch,
+  brix despatch, and strength of SDS.
+
+CAPTURE EVERY FIELD — do not leave anything out. Read every labelled value on
+every page (SAP gate pass, manual gate pass, supplier invoice, transport/LR copy,
+e-way bill, and any handwritten notes/stamps). If a labelled field does NOT have a
+place in the schema above, still capture it under "additional_information" as
+{"exact label": "value"} — never discard a field. If the same field appears more
+than once with DIFFERENT values across the pages/entries, keep ALL of them in that
+one field on separate lines (newline-separated); never drop or overwrite a value.
 
 Rules:
 

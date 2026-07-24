@@ -1,0 +1,27 @@
+Analyze the attached customer purchase order (a PO issued by a customer TO India Glycols Ltd).
+
+Convert it into the standardized Sales Order JSON schema.
+
+Field guide (SO Step):
+- customer.*            -> the party that ISSUED the PO (letterhead / their Bill-To block): name, GSTIN, PAN, full address.
+- ship_to.*             -> the delivery/consignee block (name, full address, GSTIN if printed).
+- supplier_on_po.*      -> India Glycols entity as printed (name, GSTIN, address) — used to identify the supplying plant.
+- sales_order.customer_po_number -> the customer's PO number exactly as printed.
+- sales_order.customer_po_date   -> the PO date as printed.
+- sales_order.payment_term       -> payment terms as printed.
+- sales_order.incoterm / incoterm_location / incoterm2_location -> delivery term and its location(s).
+- sales_order.basis_of_delivery  -> the full printed delivery-basis phrase.
+- sales_order.test_report_required -> "Yes" when a COA/test certificate is demanded, "No" when explicitly not required, null when silent.
+- sales_order.insurance          -> insurance clause as printed, else null.
+- sales_order.discount_credit_note -> any discount, rate difference or credit-note condition, else null.
+- sales_order.schedule_dispatch_date -> requested dispatch/delivery schedule date(s).
+- sales_order.eta_date           -> required-arrival/ETA date if printed.
+- items[]               -> one entry per product line: the customer's item code (their code), the IGL material/product name (e.g. "IGSOL 12026 E (GLYCOL ETHER)", "DIETHYLENE GLYCOL MONO ETHYL ETHER"), packaging ("52 DRUMS X 195 KGS"), HSN, quantity, unit, rate, per (unit of rate), taxable amount, GST type/%/amount, line total, per-line delivery date.
+- summary.*             -> document totals exactly as printed.
+
+Requirements:
+- Read every page.
+- Preserve line item order.
+- Preserve quantities, prices, taxes, totals, GSTIN, PAN, HSN and material codes exactly.
+- If a field is unavailable return null. Never guess values.
+- Return ONLY valid JSON matching the schema below.

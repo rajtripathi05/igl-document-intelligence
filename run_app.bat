@@ -12,9 +12,11 @@ cd /d "%~dp0"
 set "PORT=8501"
 echo Starting India Glycols Document Intelligence on http://localhost:%PORT% ...
 
-REM Stop any previous server instance so the newest code is loaded (safe no-op
-REM if none is running).
-taskkill /F /FI "WINDOWTITLE eq IGL Document Intelligence (server)*" >nul 2>&1
+REM Stop whatever is already listening on the port (by PID) so the newest code
+REM is loaded, however the previous instance was started. Then wait for the port
+REM to free up.
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":%PORT% " ^| findstr LISTENING') do taskkill /F /PID %%a >nul 2>&1
+timeout /t 3 /nobreak >nul
 
 REM Launch the server in its own window (non-blocking).
 if exist ".venv\Scripts\python.exe" (

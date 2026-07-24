@@ -123,6 +123,39 @@ def _norm_spec(name: Any) -> str:
     return raw
 
 
+# Raw-material name synonyms -> canonical display name, so each material that is
+# NOT LA/KOH/EO gets ONE self-documenting column (e.g. every "A.Acid"/"Acetic
+# Acid" reading lands together). Unknown materials are kept exactly as written
+# (e.g. "ENLITE 275T"), so you always see what raw material is actually there.
+_MATERIAL_SYNONYMS: dict[str, str] = {
+    "po": "PO", "propyleneoxide": "PO",
+    "aacid": "A.Acid", "aceticacid": "A.Acid", "acid": "A.Acid", "aa": "A.Acid",
+    "dmwater": "DM Water", "demineralisedwater": "DM Water", "dmw": "DM Water",
+    "water": "Water",
+    "ammoniasol": "Ammonia Sol", "ammonia": "Ammonia Sol",
+    "ammoniasolution": "Ammonia Sol", "ammoniasoln": "Ammonia Sol",
+    "soyabeanoil": "Soyabean Oil", "soybeanoil": "Soyabean Oil", "soyaoil": "Soyabean Oil",
+    "meoh": "MEOH", "methanol": "MEOH",
+    "hcl": "HCl", "hydrochloricacid": "HCl",
+    "mea": "MEA", "dea": "DEA", "tea": "TEA", "koh": "KOH",
+}
+
+
+def _norm_material(name: Any) -> str:
+    """Canonical display name for a raw material (folds common OCR variants)."""
+    raw = str(name or "").strip()
+    key = re.sub(r"[^a-z0-9]", "", raw.lower())
+    if not key:
+        return raw or "RM"
+    if key in _MATERIAL_SYNONYMS:
+        return _MATERIAL_SYNONYMS[key]
+    # Unknown material: collapse punctuation/extra spaces so "ENLITE-275T",
+    # "ENLITE 275T" and "ENLITE -275T" land in ONE column. (Genuine letter/digit
+    # misreads like "275T" vs "2757" remain distinct — those need the stronger
+    # model, LOGBOOK_MODEL=strong.)
+    return re.sub(r"[^A-Za-z0-9]+", " ", raw).strip() or raw
+
+
 _QC_MIN_SLOTS = 5  # Book11 provides five in-process QC slots.
 
 _ADDED_GROUP = "Log Book (added)"
@@ -474,27 +507,32 @@ def _batch_to_row(batch: _Batch) -> dict[str, Any]:
         main.get("printed_product_struck") or main.get("previous_reactor_line")
     )
 
-    # --- raw materials -> LA/KOH/EO + RM-4..RM-12 (+ companion names) ---- #
+    # --- raw materials: LA/KOH/EO by name, and EVERY other raw material as its
+    #     own column named after the material (so you see exactly what RM is in
+    #     each product, instead of generic RM-4/RM-6 slots) ------------------ #
     for canon, _ in _RM_CANON:
         row[f"rm:{canon}"] = None
-    rm_slot = 4
+    mats: dict[str, Any] = {}
     for rm in main.get("raw_materials") or []:
         if not isinstance(rm, dict) or not (rm.get("name") or rm.get("actual_qty")):
             continue
         canon = _match_canon(rm.get("name"), _RM_CANON)
         val = _material_value(rm)
-        if canon:
-            if row.get(f"rm:{canon}") in (None, ""):
-                row[f"rm:{canon}"] = val
-            else:  # duplicate LA/KOH/EO row -> overflow to an RM slot
-                canon = None
-        if not canon:
-            if rm_slot <= 12:
-                row[f"rm:{rm_slot}"] = val
-                row[f"rmname:{rm_slot}"] = rm.get("name")
-                rm_slot += 1
-            else:
-                row.setdefault("extra", {})[f"RM {rm.get('name')}"] = val
+        if canon and row.get(f"rm:{canon}") in (None, ""):
+            row[f"rm:{canon}"] = val
+            continue
+        # any other material (or a duplicate LA/KOH/EO reading) -> its own column
+        name = _norm_material(rm.get("name"))
+        if not name:
+            continue
+        if name in mats and mats.get(name) not in (None, ""):
+            k = 2
+            while f"{name} ({k})" in mats:
+                k += 1
+            mats[f"{name} ({k})"] = val
+        else:
+            mats[name] = val
+    row["_mats"] = mats
 
     # --- process steps -------------------------------------------------- #
     ps = main.get("process_steps") or {}
@@ -583,8 +621,13 @@ def _build_columns(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
                 seen_specs.append(p)
     specx_params = ([p for p in _SPEC_ORDER if p in seen_specs]
                     + [p for p in seen_specs if p not in _SPEC_ORDER])
-    rm_name_slots = sorted({int(k.split(":")[1]) for r in rows for k in r
-                            if k.startswith("rmname:")})
+    # union of every raw material seen beyond LA/KOH/EO, in first-seen order —
+    # each becomes its own named INPUT column.
+    mat_names: list[str] = []
+    for r in rows:
+        for m in (r.get("_mats") or {}):
+            if m not in mat_names:
+                mat_names.append(m)
 
     cols: list[dict[str, str]] = []
 
@@ -600,8 +643,9 @@ def _build_columns(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
     add("INPUT", "Input-1", "LA", "rm:LA")
     add("INPUT", "Input-2", "KOH", "rm:KOH")
     add("INPUT", "Input-3", "EO", "rm:EO")
-    for n in range(4, 13):
-        add("INPUT", f"Input-{n}", f"RM-{n}", f"rm:{n}")
+    # one column per actual raw material used (auto-grows with the products)
+    for i, m in enumerate(mat_names, start=4):
+        add("INPUT", f"Input-{i}", m, f"mat:{m}")
 
     steps = [("Inertization", "inertization"), ("Dehydration", "dehydration"),
              ("Reaction EO", "reaction_eo"), ("Reaction PO", "reaction_po"),
@@ -625,8 +669,6 @@ def _build_columns(rows: list[dict[str, Any]]) -> list[dict[str, str]]:
 
     # Added, log-book-specific block (the new Remarks column lives here).
     add(_ADDED_GROUP, None, "Remarks", "remarks")
-    for n in rm_name_slots:
-        add(_ADDED_GROUP, None, f"RM-{n} Material", f"rmname:{n}")
     add(_ADDED_GROUP, None, "Packing / Filling", "packing")
     add(_ADDED_GROUP, None, "Total Filled (kg)", "total_kg")
     add(_ADDED_GROUP, None, "Tank No.", "tank_no")
@@ -650,6 +692,8 @@ def _cell_value(row: dict[str, Any], key: str) -> Any:
         return None
     if key.startswith("specx:"):
         return (row.get("_specx") or {}).get(key.split(":", 1)[1])
+    if key.startswith("mat:"):
+        return (row.get("_mats") or {}).get(key.split(":", 1)[1])
     val = row.get(key)
     if isinstance(val, dict):
         return "; ".join(f"{k}={v}" for k, v in val.items()) if val else None

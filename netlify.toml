@@ -1,31 +1,30 @@
-# Netlify configuration for the "indiaglycolsai" site.
+# Netlify configuration — IGL Document Intelligence, WEB EDITION (no Streamlit).
 #
-# IMPORTANT: Netlify serves STATIC files only — it cannot run the Streamlit
-# (Python/WebSocket) server that IS this application. This config publishes the
-# static landing page (the front door). The actual app must run on a Python host
-# (Streamlit Community Cloud or Render — see DEPLOYMENT.md).
+# The site served from `web/` is a static single-page app:
+#   - RA Posting runs 100% in the browser (SheetJS + ExcelJS via CDN) —
+#     bank statements never leave the user's machine.
+#   - Sales Order extraction calls the serverless function `/api/extract`
+#     (web/functions/extract.mjs), which forwards the PO to the AI provider.
 #
-# `base` isolates Netlify to the static folder so it does NOT try to pip-install
-# the Python app (which would fail the Netlify build). Everything below is
-# relative to that base directory.
+# `base = "web"` keeps Netlify away from the Python/Streamlit app at the repo
+# root (it must NOT try to pip-install requirements.txt).
+#
+# REQUIRED environment variables (Site settings -> Environment variables):
+#   AI_API_KEY      the OpenRouter (default) or Gemini API key
+# Optional:
+#   AI_PROVIDER     openrouter (default) | gemini
+#   DEFAULT_MODEL   e.g. google/gemini-flash-latest (openrouter)
+#                        gemini-flash-latest        (gemini)
 
 [build]
-  base = "deploy/netlify-landing"
+  base = "web"
   publish = "."
   command = ""
 
-# OPTIONAL — make https://indiaglycolsai.netlify.app forward straight to the
-# running app. After you deploy the app (e.g. https://indiaglycolsai.streamlit.app
-# on Streamlit Cloud, or the Render URL), uncomment this and set `to`, commit,
-# and Netlify redeploys. A plain 302 redirect, because Netlify cannot proxy
-# Streamlit's live WebSocket connection.
-# [[redirects]]
-#   from = "/*"
-#   to = "https://indiaglycolsai.streamlit.app"
-#   status = 302
-#   force = true
+[functions]
+  directory = "functions"
+  node_bundler = "esbuild"
 
-# Security headers for the static page.
 [[headers]]
   for = "/*"
   [headers.values]

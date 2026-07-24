@@ -18,24 +18,33 @@
     "purpose": null,
     "department_code": null,
     "person_created": null,
+    "plant": null,
+    "payment_term": null,
     "manual_igp": null,
     "manual_igp_date": null
   },
   "purchase_order": {
     "po_number": null,
-    "po_date": null
+    "po_date": null,
+    "purchase_group": null
   },
   "vendor": {
     "code": null,
-    "name": null
+    "name": null,
+    "address": null
   },
   "delivery": {
     "delivery_note": null,
     "document_date": null,
+    "challan_number": null,
+    "challan_date": null,
+    "invoice_number": null,
+    "invoice_date": null,
     "vehicle_number": null,
     "vehicle_type": null,
     "number_of_packets": null,
-    "nature_of_packing": null
+    "nature_of_packing": null,
+    "condition": null
   },
   "transporter": {
     "code": null,
@@ -47,11 +56,16 @@
   "permits": {
     "mf4_number": null,
     "mf4_date": null,
-    "form_31": null
+    "form_31": null,
+    "road_permit": null,
+    "road_permit_amount": null
   },
   "value": {
     "net_value_doc_currency": null,
-    "currency": null
+    "currency": null,
+    "invoice_value": null,
+    "eway_bill_number": null,
+    "eway_bill_amount": null
   },
   "quality": {
     "despatch_grade": null,
@@ -65,7 +79,15 @@
       "material_number": null,
       "material_description": null,
       "unit": null,
-      "quantity": null
+      "quantity": null,
+      "hsn_code": null,
+      "rate": null,
+      "discount_percent": null,
+      "other_charges": null,
+      "gst_percent": null,
+      "cgst_percent": null,
+      "sgst_percent": null,
+      "value": null
     }
   ],
   "remarks": [],

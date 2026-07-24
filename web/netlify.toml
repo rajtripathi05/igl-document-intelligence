@@ -1,0 +1,18 @@
+# Netlify config when deploying the `web/` folder as the project root
+# (used by the direct uploader; the repo-root netlify.toml with base="web"
+# covers git-connected deploys — both produce the same site).
+
+[build]
+  publish = "."
+  command = ""
+
+[functions]
+  directory = "functions"
+  node_bundler = "esbuild"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"

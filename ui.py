@@ -602,6 +602,25 @@ hr {{ border-color: {LINE}; opacity: .6; }}
     background:{CARD_2}; border:1px solid {LINE};
     padding:4px 11px; border-radius:999px;
 }}
+/* The file-uploader "Browse files" control is a Streamlit *secondary* button
+   (data-testid stBaseButton-secondary). Nothing else styles it, so under our
+   dark theme it kept the light-base default — a white background, which with
+   the app's light text rendered as an invisible white-on-white button. Force
+   it to the same visible treatment as every other button. */
+[data-testid="stFileUploaderDropzone"] button,
+[data-testid="stFileUploader"] [data-testid="stBaseButton-secondary"] {{
+    background: {CARD_2} !important;
+    color: {TEXT} !important;
+    border: 1px solid {LINE} !important;
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+}}
+[data-testid="stFileUploaderDropzone"] button:hover,
+[data-testid="stFileUploader"] [data-testid="stBaseButton-secondary"]:hover {{
+    background: {CARD_HOVER} !important;
+    border-color: {PRIMARY_LIGHT} !important;
+    color: {TEXT} !important;
+}}
 
 /* ---- Buttons (Apple-inspired) -------------------------------------- */
 .stButton>button, .stDownloadButton>button {{

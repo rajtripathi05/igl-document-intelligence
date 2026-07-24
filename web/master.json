@@ -1,0 +1,125 @@
+{
+ "source": "ZCUSTMst.xls",
+ "customers": [
+  {
+   "code": "212924",
+   "name": "KIRLOSKAR PNEUMATIC COMPANY",
+   "gstin": "27AAACK2479C1ZP",
+   "address": "Plot No.1 Hadapsar, Industrial Estate,, Hadapsar, Pune, 411013, MAHARASHTRA",
+   "city": "HADAPSAR, PUNE",
+   "postal": "411013"
+  },
+  {
+   "code": "213066",
+   "name": "RADIANT HEAT EXCHANGER PVT LTD",
+   "gstin": "27AADCR2138N1Z4",
+   "address": "116/2, S - BLOCK, MIDC BHOSARI, Pune, 411026, MAHARASHTRA",
+   "city": "PUNE",
+   "postal": "411026"
+  },
+  {
+   "code": "213132",
+   "name": "MORADABAD GASES PRIVATE LIMITED",
+   "gstin": "09AAMCM3628H1Z6",
+   "address": "KHATA MO 113 FATEHPUR LINK ROAD, TARAPUR KUNDRAKI BILARI, MORADABAD, MORADABAD, 244001, UTTAR PRADESH",
+   "city": "MORADABAD",
+   "postal": "244001"
+  },
+  {
+   "code": "213213",
+   "name": "Max Air Pvt. Ltd.",
+   "gstin": "06AAJCM0770D1ZQ",
+   "address": "417, Sector- 8,, IMT Manesar, Gurgaon, 122050, HARYANA",
+   "city": "GURGAON",
+   "postal": "122050"
+  },
+  {
+   "code": "213282",
+   "name": "S.R. Industrial Gases",
+   "gstin": "06AWCPS9520P1ZW",
+   "address": "Plot No.-7, Gali No.9,, Kadlapur Indl. Area,, Pataudi Road, Gurgaon, 122001, HARYANA",
+   "city": "GURGAON",
+   "postal": "122001"
+  },
+  {
+   "code": "213334",
+   "name": "NV Gases",
+   "gstin": "06AJEPJ9627K1ZV",
+   "address": "Plot No. 1467, Sector-15, Faridabad, 121007, HARYANA",
+   "city": "FARIDABAD",
+   "postal": "121007"
+  },
+  {
+   "code": "215740",
+   "name": "ELLENBARRIE INDUSTRIAL GASES LTD",
+   "gstin": "19AAACE5770E1ZO",
+   "address": "Nh 6,Opposite Uluberia Growth center, Uluberia, Uluberia, 700016, WEST BENGAL",
+   "city": "ULUBERIA",
+   "postal": "700016"
+  },
+  {
+   "code": "205449",
+   "name": "ANKIT STEEL INDUSTRIES",
+   "gstin": "20AAZPC7081L1ZC",
+   "address": "PLOT NO.NS-4,A-1,6TH PHASE, INDUSTRIAL AREA, GAMHARIA, JAMSHEDPUR, 832108, JHARKHAND",
+   "city": "JAMSHEDPUR",
+   "postal": "832108"
+  },
+  {
+   "code": "212550",
+   "name": "JWALA CARBONICS PRIVATE LIMITED",
+   "gstin": "",
+   "address": "PLOT No 1, PHASE -3,, INDUSTRIAL AREA, SANSARPUR TERRACE, HIMACHAL PRADESH, 176501, HIMACHAL PRADESH",
+   "city": "HIMACHAL PRADESH",
+   "postal": "176501"
+  },
+  {
+   "code": "207397",
+   "name": "DIAMOND BEVERAGES PVT.LTD.",
+   "gstin": "19AABCD3346C1Z0",
+   "address": "P-41, TARATALA ROAD, KOLKATA, 700088, WEST BENGAL",
+   "city": "KOLKATA",
+   "postal": "700088"
+  },
+  {
+   "code": "210718",
+   "name": "KANAM LATEX INDUSTRIES PRIVATE LIMI",
+   "gstin": "33AABCK0056E1Z6",
+   "address": "13/13F, WEST PERUVILAI ROAD,, PALLAVILAI,NAGERCOIL, KANYAKUMARI, NAGERCOIL, 629003, TAMIL NADU",
+   "city": "NAGERCOIL",
+   "postal": "629003"
+  },
+  {
+   "code": "205113",
+   "name": "SHRI DISHA BIOTECH (P) LTD",
+   "gstin": "",
+   "address": "4-69, PEERZADIAGUDA, CANARA NAGAR, UPPAL MANDAL, HYDERABAD, 500039, ANDHRA PRADESH",
+   "city": "HYDERABAD",
+   "postal": "500039"
+  },
+  {
+   "code": "205502",
+   "name": "ADITYA CHEMICALS",
+   "gstin": "24ADDPD5816F1Z1",
+   "address": "54/B,, SARDAR PATEL INDUSTRIAL ESTATE,, SHAH WADI,, N.H. No. 8,, NAROL, 382405, GUJARAT",
+   "city": "NAROL",
+   "postal": "382405"
+  },
+  {
+   "code": "200120",
+   "name": "AMIT TRADERS",
+   "gstin": "",
+   "address": "40,, BASTI, NAU,, JALLANDHAR, 144002, PUNJAB",
+   "city": "JALLANDHAR",
+   "postal": "144002"
+  },
+  {
+   "code": "200634",
+   "name": "COIM INDIA PVT.LTD.",
+   "gstin": "06AABCC4026E1Z9",
+   "address": "1494-1495, M.I.E., BAHADURGARH, 124507, HARYANA",
+   "city": "BAHADURGARH",
+   "postal": "124507"
+  }
+ ]
+}

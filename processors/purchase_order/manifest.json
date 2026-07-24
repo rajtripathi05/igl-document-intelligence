@@ -1,8 +1,8 @@
 {
   "manifest_version": "1.0",
-  "processor_version": "1.0",
-  "schema_version": "1.0",
-  "prompt_version": "v1",
+  "processor_version": "2.0",
+  "schema_version": "2.0",
+  "prompt_version": "v2",
   "key": "purchase_order",
   "document_type": "Sales Order",
   "business_process": "Sales Order",
@@ -12,43 +12,70 @@
   "department": { "key": "marketing", "name": "Marketing", "icon": "📣", "order": 2 },
   "keywords": [
     "purchase order",
+    "customer po",
+    "sales order",
     "po number",
-    "p.o.",
-    "buyer",
-    "supplier",
-    "gst",
-    "hsn",
-    "payment terms"
+    "sold to party",
+    "ship to party",
+    "gstin",
+    "incoterm",
+    "payment terms",
+    "igsol"
   ],
-  "ai_description": "A Purchase Order issued by a buyer to a supplier listing materials, quantities, prices, GST, HSN codes, and payment terms.",
+  "ai_description": "A Purchase Order issued BY a customer TO India Glycols for chemicals. Extracts the SO-Step fields needed to create the Sales Order in SAP (sold-to/ship-to party, PO number & date, payment term, incoterms, material with packaging, plant, qty, unit, test report, insurance, delivery basis, price, discount, dispatch/ETA dates) and validates the customer against the ZCUSTMst customer master (GSTIN / name / address).",
   "sections": [
     {
-      "title": "Order",
+      "title": "Sales Order Steps",
       "fields": [
-        { "path": "purchase_order.po_number", "label": "Order Number", "required": true },
-        { "path": "purchase_order.po_date", "label": "Order Date", "kind": "date" },
-        { "path": "purchase_order.supplier_reference", "label": "Supplier Reference" },
-        { "path": "purchase_order.payment_terms", "label": "Payment Terms" },
-        { "path": "purchase_order.currency", "label": "Currency" },
-        { "path": "purchase_order.nature_of_supply", "label": "Nature of Supply" }
+        { "path": "sales_order.sold_to_party", "label": "Sold/Bill to party", "required": true },
+        { "path": "sales_order.ship_to_party", "label": "Ship to party", "kind": "long_text" },
+        { "path": "sales_order.customer_po_number", "label": "Customer reference/PO No.", "required": true },
+        { "path": "sales_order.customer_po_date", "label": "Cust. Ref./PO date", "kind": "date", "required": true },
+        { "path": "sales_order.payment_term", "label": "Payment term" },
+        { "path": "sales_order.incoterm", "label": "Incoterm" },
+        { "path": "sales_order.incoterm_location", "label": "Incoterm location" },
+        { "path": "sales_order.material_with_packaging", "label": "Material code with packaging type", "kind": "long_text" },
+        { "path": "sales_order.plant", "label": "Plant" },
+        { "path": "sales_order.total_quantity", "label": "Qty.", "kind": "number" },
+        { "path": "sales_order.unit", "label": "Unit" },
+        { "path": "sales_order.industry_key", "label": "Industry key" },
+        { "path": "sales_order.test_report_required", "label": "Test report required" },
+        { "path": "sales_order.insurance", "label": "Insurance" },
+        { "path": "sales_order.basis_of_delivery", "label": "Basis of delivery" },
+        { "path": "sales_order.incoterm2_location", "label": "Incoterm 2 location" },
+        { "path": "sales_order.price_summary", "label": "Price" },
+        { "path": "sales_order.discount_credit_note", "label": "Discount/credit note" },
+        { "path": "sales_order.schedule_dispatch_date", "label": "Schedule/dispatch date", "kind": "date" },
+        { "path": "sales_order.eta_date", "label": "ETA date", "kind": "date" }
       ]
     },
     {
-      "title": "Buyer",
+      "title": "Customer (from PO)",
       "fields": [
-        { "path": "buyer.company_name", "label": "Buyer Company" },
-        { "path": "buyer.gst_number", "label": "Buyer GST" },
-        { "path": "buyer.pan_number", "label": "Buyer PAN" },
-        { "path": "buyer.address", "label": "Buyer Address", "kind": "long_text" }
+        { "path": "customer.name", "label": "Customer Name (PO)", "required": true },
+        { "path": "customer.gstin", "label": "Customer GSTIN (PO)" },
+        { "path": "customer.pan", "label": "Customer PAN" },
+        { "path": "customer.address", "label": "Customer Address (PO)", "kind": "long_text" },
+        { "path": "ship_to.gstin", "label": "Ship-to GSTIN" }
       ]
     },
     {
-      "title": "Supplier",
+      "title": "Master Match (ZCUSTMst)",
       "fields": [
-        { "path": "supplier.company_name", "label": "Supplier Company" },
-        { "path": "supplier.gst_number", "label": "Supplier GST" },
-        { "path": "supplier.pan_number", "label": "Supplier PAN" },
-        { "path": "supplier.address", "label": "Supplier Address", "kind": "long_text" }
+        { "path": "master_match.matched", "label": "Matched in Master" },
+        { "path": "master_match.method", "label": "Match Method" },
+        { "path": "master_match.customer_code", "label": "Customer Code" },
+        { "path": "master_match.customer_name", "label": "Master Customer Name" },
+        { "path": "master_match.gstin", "label": "Master GSTIN" },
+        { "path": "master_match.address", "label": "Master Address", "kind": "long_text" }
+      ]
+    },
+    {
+      "title": "Supplier on PO (IGL)",
+      "fields": [
+        { "path": "supplier_on_po.name", "label": "Supplier Name" },
+        { "path": "supplier_on_po.gstin", "label": "Supplier GSTIN" },
+        { "path": "supplier_on_po.address", "label": "Supplier Address", "kind": "long_text" }
       ]
     },
     {
@@ -65,29 +92,32 @@
   ],
   "sap": {
     "required": [
-      { "path": "purchase_order.po_number", "label": "Order Number" },
-      { "path": "purchase_order.po_date", "label": "Order Date", "kind": "date" },
-      { "path": "buyer.gst_number", "label": "Buyer GST" },
-      { "path": "supplier.gst_number", "label": "Supplier GST" },
-      { "path": "purchase_order.currency", "label": "Currency" },
-      { "path": "summary.grand_total", "label": "Grand Total", "kind": "number" }
+      { "path": "sales_order.sold_to_party", "label": "Sold/Bill to party" },
+      { "path": "sales_order.customer_po_number", "label": "Customer reference/PO No." },
+      { "path": "sales_order.customer_po_date", "label": "Cust. Ref./PO date", "kind": "date" },
+      { "path": "master_match.customer_code", "label": "Customer Code (master)" },
+      { "path": "sales_order.total_quantity", "label": "Qty.", "kind": "number" },
+      { "path": "sales_order.price_summary", "label": "Price" }
     ]
   },
   "line_items": {
     "path": "items",
     "columns": [
       { "key": "line_number", "label": "Line #" },
-      { "key": "material_code", "label": "Material Code" },
+      { "key": "customer_item_code", "label": "Customer Item Code" },
+      { "key": "material_code", "label": "Material / Product" },
       { "key": "description", "label": "Description" },
+      { "key": "packaging_type", "label": "Packaging" },
       { "key": "hsn_code", "label": "HSN Code" },
       { "key": "quantity", "label": "Quantity", "kind": "number" },
       { "key": "unit", "label": "Unit" },
-      { "key": "unit_price", "label": "Unit Price", "kind": "number" },
+      { "key": "unit_price", "label": "Rate", "kind": "number" },
+      { "key": "price_per", "label": "Per" },
       { "key": "taxable_amount", "label": "Taxable Amount", "kind": "number" },
-      { "key": "gst_type", "label": "GST Type" },
       { "key": "gst_percent", "label": "GST %", "kind": "number" },
       { "key": "gst_amount", "label": "GST Amount", "kind": "number" },
-      { "key": "total_amount", "label": "Total Amount", "kind": "number" }
+      { "key": "total_amount", "label": "Total Amount", "kind": "number" },
+      { "key": "delivery_date", "label": "Delivery Date" }
     ]
   },
   "export": {
@@ -95,21 +125,32 @@
     "header_row": 1,
     "start_row": 2,
     "columns": [
-      { "header": "Order Number", "path": "purchase_order.po_number" },
-      { "header": "Order Date", "path": "purchase_order.po_date" },
-      { "header": "Supplier Reference", "path": "purchase_order.supplier_reference" },
-      { "header": "Buyer Company", "path": "buyer.company_name" },
-      { "header": "Buyer GST", "path": "buyer.gst_number" },
-      { "header": "Supplier Company", "path": "supplier.company_name" },
-      { "header": "Supplier GST", "path": "supplier.gst_number" },
-      { "header": "Currency", "path": "purchase_order.currency" },
-      { "header": "Payment Terms", "path": "purchase_order.payment_terms" },
-      { "header": "Subtotal", "path": "summary.subtotal" },
-      { "header": "CGST", "path": "summary.cgst" },
-      { "header": "SGST", "path": "summary.sgst" },
-      { "header": "IGST", "path": "summary.igst" },
+      { "header": "Sold/Bill to party", "path": "sales_order.sold_to_party" },
+      { "header": "Ship to party", "path": "sales_order.ship_to_party" },
+      { "header": "Customer reference/PO No.", "path": "sales_order.customer_po_number" },
+      { "header": "Cust. Ref./PO date", "path": "sales_order.customer_po_date" },
+      { "header": "Payment term", "path": "sales_order.payment_term" },
+      { "header": "Incoterm", "path": "sales_order.incoterm" },
+      { "header": "Incoterm location", "path": "sales_order.incoterm_location" },
+      { "header": "Material code with packaging type", "path": "sales_order.material_with_packaging" },
+      { "header": "Plant", "path": "sales_order.plant" },
+      { "header": "Qty.", "path": "sales_order.total_quantity" },
+      { "header": "Unit", "path": "sales_order.unit" },
+      { "header": "Industry key", "path": "sales_order.industry_key" },
+      { "header": "Test report required", "path": "sales_order.test_report_required" },
+      { "header": "Insurance", "path": "sales_order.insurance" },
+      { "header": "Basis of delivery", "path": "sales_order.basis_of_delivery" },
+      { "header": "Incoterm 2 location", "path": "sales_order.incoterm2_location" },
+      { "header": "Price", "path": "sales_order.price_summary" },
+      { "header": "Discount/credit note", "path": "sales_order.discount_credit_note" },
+      { "header": "Schedule/dispatch date", "path": "sales_order.schedule_dispatch_date" },
+      { "header": "ETA date", "path": "sales_order.eta_date" },
+      { "header": "Customer Code (master)", "path": "master_match.customer_code" },
+      { "header": "Master Match", "path": "master_match.method" },
+      { "header": "Customer GSTIN (PO)", "path": "customer.gstin" },
+      { "header": "Master GSTIN", "path": "master_match.gstin" },
       { "header": "Grand Total", "path": "summary.grand_total" },
-      { "header": "Amount in Words", "path": "summary.amount_in_words" }
+      { "header": "Source File", "path": "metadata.source.filename" }
     ]
   }
 }

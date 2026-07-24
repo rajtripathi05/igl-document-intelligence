@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>India Glycols — Document Intelligence</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js" defer></script>
+<script src="ra_parser.js" defer></script>
+<script src="so_engine.js" defer></script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">IGL</div>
+    <div>
+      <h1>India Glycols — Document Intelligence</h1>
+      <p class="sub">Marketing · Web edition (no server app required)</p>
+    </div>
+  </div>
+  <nav class="tabs">
+    <button class="tab active" data-tab="so">Sales Order</button>
+    <button class="tab" data-tab="ra">RA Posting</button>
+  </nav>
+</header>
+
+<main>
+  <!-- ============ SALES ORDER ============ -->
+  <section id="tab-so" class="panel active">
+    <div class="card intro">
+      <h2>Customer PO → Sales Order register</h2>
+      <p>Upload customer purchase orders (PDF / photo). The AI extracts the SO-Step
+         fields, the customer is verified against the <b>ZCUSTMst</b> master
+         (GSTIN → PAN → name), and every file becomes <b>one row</b> in the register.</p>
+      <div class="master-line">
+        <span id="master-status" class="chip">Master: loading…</span>
+        <label class="btn ghost small">
+          Replace master (ZCUSTMst.xls)
+          <input type="file" id="master-input" accept=".xls,.xlsx" hidden>
+        </label>
+      </div>
+    </div>
+
+    <label class="drop" id="so-drop">
+      <input type="file" id="so-input" accept=".pdf,.png,.jpg,.jpeg,.webp" multiple hidden>
+      <div class="drop-inner">
+        <div class="drop-icon">📄</div>
+        <div><b>Drop customer POs here</b> or click to choose<br>
+        <span class="hint">PDF · JPG · PNG — multiple files become multiple rows</span></div>
+      </div>
+    </label>
+
+    <div id="so-progress" class="progress hidden"></div>
+    <div id="so-warnings" class="warnings hidden"></div>
+
+    <div id="so-results" class="card hidden">
+      <div class="results-head">
+        <h3 id="so-summary">Results</h3>
+        <button id="so-download" class="btn primary" disabled>⬇ Download Sales Order Register (.xlsx)</button>
+      </div>
+      <div class="table-wrap"><table id="so-table"></table></div>
+    </div>
+  </section>
+
+  <!-- ============ RA POSTING ============ -->
+  <section id="tab-ra" class="panel">
+    <div class="card intro">
+      <h2>Bank statements → customer-wise CR summary</h2>
+      <p>Upload SBI / IDBI statements (<b>.xlsx / .xls / .xlsb / .csv</b>, including compiled
+         workbooks with many overlapping downloads). Only <b>CR entries</b> are kept,
+         duplicates from re-downloaded statements are removed, and the workbook contains
+         <b>Conclusion</b> (flat, filter-ready) + one sheet per bank + All&nbsp;Banks.</p>
+      <p class="privacy">🔒 Processed entirely in your browser — bank data never leaves this computer.</p>
+    </div>
+
+    <label class="drop" id="ra-drop">
+      <input type="file" id="ra-input" accept=".xlsx,.xls,.xlsb,.csv" multiple hidden>
+      <div class="drop-inner">
+        <div class="drop-icon">🏦</div>
+        <div><b>Drop bank statements here</b> or click to choose<br>
+        <span class="hint">SBI / IDBI · Excel or CSV</span></div>
+      </div>
+    </label>
+
+    <div id="ra-progress" class="progress hidden"></div>
+    <div id="ra-warnings" class="warnings hidden"></div>
+
+    <div id="ra-results" class="card hidden">
+      <div class="results-head">
+        <h3 id="ra-summary">Summary</h3>
+        <button id="ra-download" class="btn primary" disabled>⬇ Download RA Posting Summary (.xlsx)</button>
+      </div>
+      <div id="ra-kpis" class="kpis"></div>
+      <div class="table-wrap"><table id="ra-table"></table></div>
+      <p class="hint" id="ra-more"></p>
+    </div>
+  </section>
+</main>
+
+<footer>India Glycols Limited · Enterprise Document Intelligence · web edition</footer>
+</body>
+</html>

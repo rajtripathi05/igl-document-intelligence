@@ -127,7 +127,10 @@ if WHICH in ("igp", "both"):
         import consolidated_excel
 
         igp = get_processor("igp")
-        pdfs = sorted((BASE / "processors" / "igp" / "samples").glob("*.pdf"))
+        igp_dir = BASE / "samples" / "IGP SAMPLES"
+        if not igp_dir.is_dir() or not list(igp_dir.glob("*.pdf")):
+            igp_dir = BASE / "processors" / "igp" / "samples"
+        pdfs = sorted(igp_dir.glob("*.pdf"))
         only = next((a.split("=", 1)[1] for a in sys.argv[2:] if a.startswith("only=")), None)
         if only:
             pdfs = [p for p in pdfs if only.lower() in p.name.lower()]
@@ -202,6 +205,8 @@ if WHICH in ("logbook", "both"):
             log(f"\n  ▸ {folder.name}: {len(imgs)} imgs -> main={st['main_pages']} "
                 f"remarks={st['remarks_pages']} batches={st['batches']} in {dt:.0f}s "
                 f"(total cols={len(res.get('columns', []))})")
+            mat_cols = [c["name"] for c in res.get("column_defs", []) if c.get("group") == "INPUT"]
+            log(f"      INPUT/material cols ({len(mat_cols)}): " + ", ".join(mat_cols))
             spec_cols = [c["name"] for c in res.get("column_defs", [])
                          if c.get("group") == "Complete Analysis / Specification"]
             log(f"      spec cols ({len(spec_cols)}): " + ", ".join(spec_cols))

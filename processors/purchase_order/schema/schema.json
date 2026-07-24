@@ -1,51 +1,82 @@
 {
   "metadata": {
-    "document_type": "Purchase Order",
-    "department": "Procurement",
-    "document_subtype": "Material Purchase Order",
+    "document_type": "Customer Purchase Order",
+    "department": "Marketing",
+    "document_subtype": "Sales Order Input",
     "source": {
       "filename": "",
       "file_type": "pdf"
     }
   },
-  "buyer": {
-    "company_name": "",
+  "customer": {
+    "name": "",
+    "gstin": "",
+    "pan": "",
     "address": "",
-    "gst_number": "",
-    "pan_number": ""
+    "bill_to_name": "",
+    "bill_to_gstin": "",
+    "bill_to_address": ""
   },
-  "supplier": {
-    "company_name": "",
+  "ship_to": {
+    "name": "",
     "address": "",
-    "gst_number": "",
-    "pan_number": ""
+    "gstin": ""
   },
-  "purchase_order": {
-    "po_number": "",
-    "po_date": "",
-    "supplier_reference": "",
-    "contract_number": null,
-    "payment_terms": "",
-    "delivery_date": null,
-    "currency": "",
-    "nature_of_supply": "",
-    "bill_to": "",
-    "ship_to": ""
+  "supplier_on_po": {
+    "name": "",
+    "gstin": "",
+    "address": ""
+  },
+  "sales_order": {
+    "sold_to_party": "",
+    "ship_to_party": "",
+    "customer_po_number": "",
+    "customer_po_date": "",
+    "payment_term": "",
+    "incoterm": "",
+    "incoterm_location": "",
+    "incoterm2_location": "",
+    "basis_of_delivery": "",
+    "plant": null,
+    "industry_key": null,
+    "test_report_required": "",
+    "insurance": "",
+    "discount_credit_note": "",
+    "schedule_dispatch_date": "",
+    "eta_date": "",
+    "material_with_packaging": "",
+    "total_quantity": null,
+    "unit": "",
+    "price_summary": ""
+  },
+  "master_match": {
+    "matched": false,
+    "method": "",
+    "customer_code": "",
+    "customer_name": "",
+    "gstin": "",
+    "address": "",
+    "issues": []
   },
   "items": [
     {
       "line_number": "",
+      "customer_item_code": "",
       "material_code": "",
       "description": "",
+      "packaging_type": "",
+      "material_with_packaging": "",
       "hsn_code": "",
       "quantity": 0,
       "unit": "",
       "unit_price": 0,
+      "price_per": "",
       "taxable_amount": 0,
       "gst_type": "",
       "gst_percent": 0,
       "gst_amount": 0,
-      "total_amount": 0
+      "total_amount": 0,
+      "delivery_date": ""
     }
   ],
   "summary": {

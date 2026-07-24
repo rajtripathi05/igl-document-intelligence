@@ -44,9 +44,22 @@ def _norm(header: Any) -> str:
 
 
 def _excel_safe(value: Any) -> Any:
-    """Coerce a value into something openpyxl can write."""
+    """Coerce a value into something openpyxl can write.
+
+    Dicts (e.g. a catch-all "Additional Fields" column) render as
+    ``key: value`` pairs and lists as newline-joined values, so extra/multi-value
+    data is captured legibly; empty containers become blank cells.
+    """
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
+    if isinstance(value, dict):
+        if not value:
+            return None
+        return "\n".join(f"{k}: {v}" for k, v in value.items() if v not in (None, ""))
+    if isinstance(value, (list, tuple)):
+        if not value:
+            return None
+        return "\n".join(str(v) for v in value if v not in (None, ""))
     return str(value)
 
 

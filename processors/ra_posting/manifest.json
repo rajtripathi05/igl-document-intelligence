@@ -1,6 +1,6 @@
 {
   "manifest_version": "1.0",
-  "processor_version": "1.0",
+  "processor_version": "2.0",
   "schema_version": "1.0",
   "key": "ra_posting",
   "document_type": "RA Posting",
@@ -19,8 +19,9 @@
     "imps",
     "credit",
     "sbi",
-    "idbi"
+    "idbi",
+    "xlsb"
   ],
-  "ai_description": "A bank statement (SBI or IDBI) uploaded as Excel or CSV. Produces a merged, customer-wise summary of CREDIT (CR) receipts — grouped A-Z with per-customer subtotals and a grand total.",
-  "input_formats": ["xlsx", "xls", "csv"]
+  "ai_description": "Bank statements (SBI / IDBI) uploaded as Excel (.xlsx/.xls/.xlsb) or CSV - including compiled workbooks with one sheet per bank and many overlapping statement downloads pasted per sheet. Produces a customer-wise summary of CREDIT (CR) receipts only, de-duplicated across overlapping downloads, grouped A-Z with per-customer subtotals and a grand total. One output sheet per bank plus a combined 'All Banks' sheet.",
+  "input_formats": ["xlsx", "xls", "xlsb", "csv"]
 }
